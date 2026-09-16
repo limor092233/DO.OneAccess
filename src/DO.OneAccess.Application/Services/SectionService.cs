@@ -1,6 +1,6 @@
-using Microsoft.EntityFrameworkCore;
 using DO.OneAccess.Application.Common.Exceptions;
 using DO.OneAccess.Application.Common.Interfaces;
+using DO.OneAccess.Application.Common.Interfaces.Persistence;
 using DO.OneAccess.Application.Common.Security;
 using DO.OneAccess.Application.DTOs;
 using DO.OneAccess.Application.DTOs.Audit;
@@ -11,13 +11,24 @@ namespace DO.OneAccess.Application.Services;
 
 public class SectionService : ISectionService
 {
-    private readonly IApplicationDbContext _context;
+    private readonly ISectionRepository _sectionRepository;
+    private readonly IDivisionRepository _divisionRepository;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
+    private readonly IApplicationDbContext _context;
 
-    public SectionService(IApplicationDbContext context, IAuditService auditService)
+    public SectionService(
+        ISectionRepository sectionRepository,
+        IDivisionRepository divisionRepository,
+        IUnitOfWork unitOfWork,
+        IAuditService auditService,
+        IApplicationDbContext context)
     {
-        _context = context;
-        _auditService = auditService;
+        _sectionRepository = sectionRepository ?? throw new ArgumentNullException(nameof(sectionRepository));
+        _divisionRepository = divisionRepository ?? throw new ArgumentNullException(nameof(divisionRepository));
+        _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
+        _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
+        _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
     public async Task<IReadOnlyList<SectionDto>> GetSectionsAsync(
@@ -33,38 +44,21 @@ public class SectionService : ISectionService
             throw new ForbiddenException("Operation is outside administrator's assigned division scope.");
         }
 
-        var dbQuery = _context.Sections
-            .Include(s => s.Division)
-            .AsNoTracking();
+        var targetDivisionId = adminDivisionId ?? query.DivisionId;
 
-        if (adminDivisionId.HasValue)
-        {
-            dbQuery = dbQuery.Where(s => s.DivisionId == adminDivisionId.Value);
-        }
-        else if (query.DivisionId.HasValue)
-        {
-            dbQuery = dbQuery.Where(s => s.DivisionId == query.DivisionId.Value);
-        }
+        var sections = await _sectionRepository.GetListAsync(targetDivisionId, query.IsActive, cancellationToken);
 
-        if (query.IsActive.HasValue)
+        return sections.Select(s => new SectionDto
         {
-            dbQuery = dbQuery.Where(s => s.IsActive == query.IsActive.Value);
-        }
-
-        return await dbQuery
-            .OrderBy(s => s.Name)
-            .Select(s => new SectionDto
-            {
-                SectionId = s.SectionId,
-                DivisionId = s.DivisionId,
-                DivisionName = s.Division.Name,
-                Code = s.Code,
-                Name = s.Name,
-                Description = s.Description,
-                IsActive = s.IsActive,
-                CreatedAt = s.CreatedAt
-            })
-            .ToListAsync(cancellationToken);
+            SectionId = s.SectionId,
+            DivisionId = s.DivisionId,
+            DivisionName = s.Division.Name,
+            Code = s.Code,
+            Name = s.Name,
+            Description = s.Description,
+            IsActive = s.IsActive,
+            CreatedAt = s.CreatedAt
+        }).ToList();
     }
 
     public async Task<SectionDto> GetSectionByIdAsync(
@@ -75,10 +69,7 @@ public class SectionService : ISectionService
         await AuthorizationHelper.ValidateSectionScopeAsync(
             _context, actorUserId, sectionId, mustBeActive: false, cancellationToken);
 
-        var section = await _context.Sections
-            .Include(s => s.Division)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.SectionId == sectionId, cancellationToken);
+        var section = await _sectionRepository.GetByIdAsync(sectionId, includeDivision: true, cancellationToken);
 
         if (section == null)
         {
@@ -107,8 +98,7 @@ public class SectionService : ISectionService
         await AuthorizationHelper.ValidateDivisionScopeAsync(
             _context, actorUserId, dto.DivisionId, mustBeActive: true, cancellationToken);
 
-        var division = await _context.Divisions
-            .FirstOrDefaultAsync(d => d.DivisionId == dto.DivisionId, cancellationToken);
+        var division = await _divisionRepository.GetByIdAsync(dto.DivisionId, cancellationToken);
 
         if (division == null)
         {
@@ -125,8 +115,7 @@ public class SectionService : ISectionService
             throw new ValidationException(nameof(dto.Name), "Name is required.");
         }
 
-        var exists = await _context.Sections
-            .AnyAsync(s => s.DivisionId == dto.DivisionId && s.Code == dto.Code, cancellationToken);
+        var exists = await _sectionRepository.ExistsByCodeAsync(dto.DivisionId, dto.Code, cancellationToken: cancellationToken);
 
         if (exists)
         {
@@ -144,8 +133,8 @@ public class SectionService : ISectionService
             CreatedBy = actorUserId
         };
 
-        _context.Sections.Add(section);
-        await _context.SaveChangesAsync(cancellationToken);
+        _sectionRepository.Add(section);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {
@@ -178,9 +167,7 @@ public class SectionService : ISectionService
         await AuthorizationHelper.ValidateSectionScopeAsync(
             _context, actorUserId, sectionId, mustBeActive: true, cancellationToken);
 
-        var section = await _context.Sections
-            .Include(s => s.Division)
-            .FirstOrDefaultAsync(s => s.SectionId == sectionId, cancellationToken);
+        var section = await _sectionRepository.GetByIdAsync(sectionId, includeDivision: true, cancellationToken);
 
         if (section == null)
         {
@@ -207,7 +194,8 @@ public class SectionService : ISectionService
         section.UpdatedAt = DateTime.UtcNow;
         section.UpdatedBy = actorUserId;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        _sectionRepository.Update(section);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         var newValues = $"{{\"Name\":\"{section.Name}\",\"Description\":\"{section.Description}\",\"IsActive\":{section.IsActive.ToString().ToLowerInvariant()}}}";
 
@@ -242,8 +230,7 @@ public class SectionService : ISectionService
         await AuthorizationHelper.ValidateSectionScopeAsync(
             _context, actorUserId, sectionId, mustBeActive: true, cancellationToken);
 
-        var section = await _context.Sections
-            .FirstOrDefaultAsync(s => s.SectionId == sectionId, cancellationToken);
+        var section = await _sectionRepository.GetByIdAsync(sectionId, includeDivision: false, cancellationToken);
 
         if (section == null)
         {
@@ -256,7 +243,8 @@ public class SectionService : ISectionService
         section.UpdatedAt = DateTime.UtcNow;
         section.UpdatedBy = actorUserId;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        _sectionRepository.Update(section);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {

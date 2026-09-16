@@ -1,40 +1,60 @@
-using Microsoft.EntityFrameworkCore;
 using DO.OneAccess.Application.Common.Exceptions;
 using DO.OneAccess.Application.Common.Interfaces;
+using DO.OneAccess.Application.Common.Interfaces.Persistence;
 using DO.OneAccess.Application.Common.Security;
 using DO.OneAccess.Application.DTOs.Access;
 using DO.OneAccess.Application.DTOs.Audit;
 using DO.OneAccess.Domain.Entities;
-using DO.OneAccess.Domain.Enums;
 
 namespace DO.OneAccess.Application.Services;
 
 public class AdminScopeService : IAdminScopeService
 {
-    private readonly IApplicationDbContext _context;
+    private readonly IAdminScopeRepository _adminScopeRepository;
+    private readonly IAdminSystemAccessRepository _adminSystemAccessRepository;
+    private readonly IUserRepository _userRepository;
+    private readonly IDivisionRepository _divisionRepository;
+    private readonly ISystemRepository _systemRepository;
+    private readonly IRefreshTokenRepository _refreshTokenRepository;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
+    private readonly IApplicationDbContext _context;
 
-    public AdminScopeService(IApplicationDbContext context, IAuditService auditService)
+    public AdminScopeService(
+        IAdminScopeRepository adminScopeRepository,
+        IAdminSystemAccessRepository adminSystemAccessRepository,
+        IUserRepository userRepository,
+        IDivisionRepository divisionRepository,
+        ISystemRepository systemRepository,
+        IRefreshTokenRepository refreshTokenRepository,
+        IUnitOfWork unitOfWork,
+        IAuditService auditService,
+        IApplicationDbContext context)
     {
-        _context = context;
-        _auditService = auditService;
+        _adminScopeRepository = adminScopeRepository ?? throw new ArgumentNullException(nameof(adminScopeRepository));
+        _adminSystemAccessRepository = adminSystemAccessRepository ?? throw new ArgumentNullException(nameof(adminSystemAccessRepository));
+        _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
+        _divisionRepository = divisionRepository ?? throw new ArgumentNullException(nameof(divisionRepository));
+        _systemRepository = systemRepository ?? throw new ArgumentNullException(nameof(systemRepository));
+        _refreshTokenRepository = refreshTokenRepository ?? throw new ArgumentNullException(nameof(refreshTokenRepository));
+        _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
+        _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
+        _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
     public async Task<IReadOnlyList<AdminScopeDto>> GetAllScopesAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.AdministratorScopes
-            .Include(s => s.Division)
-            .AsNoTracking()
-            .Select(s => new AdminScopeDto
-            {
-                AdministratorScopeId = s.AdministratorScopeId,
-                AdministratorUserId = s.AdministratorUserId,
-                DivisionId = s.DivisionId,
-                DivisionName = s.Division.Name,
-                CreatedAt = s.CreatedAt,
-                CreatedBy = s.CreatedBy
-            })
-            .ToListAsync(cancellationToken);
+        var scopes = await _adminScopeRepository.GetAllAsync(cancellationToken);
+
+        return scopes.Select(s => new AdminScopeDto
+        {
+            AdministratorScopeId = s.AdministratorScopeId,
+            AdministratorUserId = s.AdministratorUserId,
+            DivisionId = s.DivisionId,
+            DivisionName = s.Division.Name,
+            CreatedAt = s.CreatedAt,
+            CreatedBy = s.CreatedBy
+        }).ToList();
     }
 
     public async Task<AdminScopeDto> AssignDivisionScopeAsync(
@@ -44,24 +64,21 @@ public class AdminScopeService : IAdminScopeService
     {
         await AuthorizationHelper.RequireSystemAdministratorAsync(_context, actorUserId, mustBeActive: true, cancellationToken);
 
-        var targetUser = await _context.Users
-            .FirstOrDefaultAsync(u => u.UserId == dto.AdministratorUserId, cancellationToken);
+        var targetUser = await _userRepository.GetByIdAsync(dto.AdministratorUserId, includeNavigations: false, cancellationToken);
 
         if (targetUser == null)
         {
             throw new NotFoundException(nameof(User), dto.AdministratorUserId);
         }
 
-        var division = await _context.Divisions
-            .FirstOrDefaultAsync(d => d.DivisionId == dto.DivisionId, cancellationToken);
+        var division = await _divisionRepository.GetByIdAsync(dto.DivisionId, cancellationToken);
 
         if (division == null)
         {
             throw new NotFoundException(nameof(Division), dto.DivisionId);
         }
 
-        var existingScope = await _context.AdministratorScopes
-            .FirstOrDefaultAsync(s => s.AdministratorUserId == dto.AdministratorUserId, cancellationToken);
+        var existingScope = await _adminScopeRepository.GetByAdminUserIdAsync(dto.AdministratorUserId, cancellationToken);
 
         if (existingScope != null)
         {
@@ -77,20 +94,13 @@ public class AdminScopeService : IAdminScopeService
             CreatedBy = actorUserId
         };
 
-        _context.AdministratorScopes.Add(newScope);
+        _adminScopeRepository.Add(newScope);
 
         // Atomically revoke active refresh tokens for the affected administrator
-        var activeTokensOnAssign = await _context.RefreshTokens
-            .Where(t => t.UserId == dto.AdministratorUserId && t.RevokedAt == null)
-            .ToListAsync(cancellationToken);
+        await _refreshTokenRepository.RevokeAllActiveByUserIdAsync(
+            dto.AdministratorUserId, "ADMIN_SCOPE_ASSIGNED", "ADMIN_SCOPE_ASSIGNED", cancellationToken);
 
-        foreach (var token in activeTokensOnAssign)
-        {
-            token.RevokedAt = now;
-            token.RevokedByIp = "ADMIN_SCOPE_ASSIGNED";
-        }
-
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {
@@ -116,8 +126,7 @@ public class AdminScopeService : IAdminScopeService
     {
         await AuthorizationHelper.RequireSystemAdministratorAsync(_context, actorUserId, mustBeActive: true, cancellationToken);
 
-        var scope = await _context.AdministratorScopes
-            .FirstOrDefaultAsync(s => s.AdministratorScopeId == adminScopeId, cancellationToken);
+        var scope = await _adminScopeRepository.GetByIdAsync((int)adminScopeId, cancellationToken);
 
         if (scope == null)
         {
@@ -127,21 +136,13 @@ public class AdminScopeService : IAdminScopeService
         var affectedUserId = scope.AdministratorUserId;
         var oldValues = $"{{\"AdministratorUserId\":\"{affectedUserId}\",\"DivisionId\":{scope.DivisionId}}}";
 
-        _context.AdministratorScopes.Remove(scope);
+        _adminScopeRepository.Remove(scope);
 
         // Atomically revoke active refresh tokens for the affected administrator
-        var now = DateTime.UtcNow;
-        var activeTokensOnRevoke = await _context.RefreshTokens
-            .Where(t => t.UserId == affectedUserId && t.RevokedAt == null)
-            .ToListAsync(cancellationToken);
+        await _refreshTokenRepository.RevokeAllActiveByUserIdAsync(
+            affectedUserId, "ADMIN_SCOPE_REVOKED", "ADMIN_SCOPE_REVOKED", cancellationToken);
 
-        foreach (var token in activeTokensOnRevoke)
-        {
-            token.RevokedAt = now;
-            token.RevokedByIp = "ADMIN_SCOPE_REVOKED";
-        }
-
-        await _context.SaveChangesAsync(cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {
@@ -155,19 +156,17 @@ public class AdminScopeService : IAdminScopeService
 
     public async Task<IReadOnlyList<AdminSystemAccessDto>> GetAllAdminSystemAccessGrantsAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.AdministratorSystemAccess
-            .Include(a => a.System)
-            .AsNoTracking()
-            .Select(a => new AdminSystemAccessDto
-            {
-                AdministratorSystemAccessId = a.AdministratorSystemAccessId,
-                AdministratorUserId = a.AdministratorUserId,
-                SystemId = a.SystemId,
-                SystemName = a.System.SystemName,
-                CreatedAt = a.CreatedAt,
-                CreatedBy = a.CreatedBy
-            })
-            .ToListAsync(cancellationToken);
+        var grants = await _adminSystemAccessRepository.GetAllAsync(cancellationToken);
+
+        return grants.Select(a => new AdminSystemAccessDto
+        {
+            AdministratorSystemAccessId = a.AdministratorSystemAccessId,
+            AdministratorUserId = a.AdministratorUserId,
+            SystemId = a.SystemId,
+            SystemName = a.System.SystemName,
+            CreatedAt = a.CreatedAt,
+            CreatedBy = a.CreatedBy
+        }).ToList();
     }
 
     public async Task<AdminSystemAccessDto> GrantAdminSystemAccessAsync(
@@ -177,24 +176,22 @@ public class AdminScopeService : IAdminScopeService
     {
         await AuthorizationHelper.RequireSystemAdministratorAsync(_context, actorUserId, mustBeActive: true, cancellationToken);
 
-        var targetUser = await _context.Users
-            .FirstOrDefaultAsync(u => u.UserId == dto.AdministratorUserId, cancellationToken);
+        var targetUser = await _userRepository.GetByIdAsync(dto.AdministratorUserId, includeNavigations: false, cancellationToken);
 
         if (targetUser == null)
         {
             throw new NotFoundException(nameof(User), dto.AdministratorUserId);
         }
 
-        var system = await _context.Systems
-            .FirstOrDefaultAsync(s => s.SystemId == dto.SystemId, cancellationToken);
+        var system = await _systemRepository.GetByIdAsync(dto.SystemId, cancellationToken);
 
         if (system == null)
         {
             throw new NotFoundException(nameof(Domain.Entities.System), dto.SystemId);
         }
 
-        var existingGrant = await _context.AdministratorSystemAccess
-            .FirstOrDefaultAsync(a => a.AdministratorUserId == dto.AdministratorUserId && a.SystemId == dto.SystemId, cancellationToken);
+        var existingGrant = await _adminSystemAccessRepository.GetByAdminAndSystemAsync(
+            dto.AdministratorUserId, dto.SystemId, cancellationToken);
 
         if (existingGrant != null)
         {
@@ -209,8 +206,8 @@ public class AdminScopeService : IAdminScopeService
             CreatedBy = actorUserId
         };
 
-        _context.AdministratorSystemAccess.Add(newGrant);
-        await _context.SaveChangesAsync(cancellationToken);
+        _adminSystemAccessRepository.Add(newGrant);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {
@@ -236,8 +233,7 @@ public class AdminScopeService : IAdminScopeService
     {
         await AuthorizationHelper.RequireSystemAdministratorAsync(_context, actorUserId, mustBeActive: true, cancellationToken);
 
-        var grant = await _context.AdministratorSystemAccess
-            .FirstOrDefaultAsync(a => a.AdministratorSystemAccessId == adminSystemAccessId, cancellationToken);
+        var grant = await _adminSystemAccessRepository.GetByIdAsync((int)adminSystemAccessId, cancellationToken);
 
         if (grant == null)
         {
@@ -246,8 +242,8 @@ public class AdminScopeService : IAdminScopeService
 
         var oldValues = $"{{\"AdministratorUserId\":\"{grant.AdministratorUserId}\",\"SystemId\":\"{grant.SystemId}\"}}";
 
-        _context.AdministratorSystemAccess.Remove(grant);
-        await _context.SaveChangesAsync(cancellationToken);
+        _adminSystemAccessRepository.Remove(grant);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {

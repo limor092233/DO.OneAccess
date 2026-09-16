@@ -45,7 +45,15 @@ public class AuthorizationHardeningTests : IDisposable
         _auditService = new AuditService(_context);
         _passwordHasher = new PasswordHasher();
         _userService = new UserService(_context, _auditService, _passwordHasher);
-        _adminScopeService = new AdminScopeService(_context, _auditService);
+        var adminScopeRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.AdminScopeRepository(_context);
+        var adminSystemAccessRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.AdminSystemAccessRepository(_context);
+        var userRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.UserRepository(_context);
+        var divRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.DivisionRepository(_context);
+        var sysRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.SystemRepository(_context);
+        var refreshRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.RefreshTokenRepository(_context);
+        var uow = new DO.OneAccess.Infrastructure.Persistence.UnitOfWork(_context);
+        _adminScopeService = new AdminScopeService(
+            adminScopeRepo, adminSystemAccessRepo, userRepo, divRepo, sysRepo, refreshRepo, uow, _auditService, _context);
 
         SeedDatabase();
     }
