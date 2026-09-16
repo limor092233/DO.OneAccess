@@ -3,8 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using DO.OneAccess.Application.Common.Interfaces;
+using DO.OneAccess.Application.Common.Interfaces.Persistence;
 using DO.OneAccess.Application.Services;
 using DO.OneAccess.Infrastructure.Persistence;
+using DO.OneAccess.Infrastructure.Persistence.Queries;
+using DO.OneAccess.Infrastructure.Persistence.Repositories;
 using DO.OneAccess.Infrastructure.Security;
 
 namespace DO.OneAccess.Infrastructure.Extensions;
@@ -13,13 +16,37 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddInfrastructurePersistence(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("DefaultConnection")
-            ?? "Server=localhost\\SQLEXPRESS;Database=DO_OneAccess;Trusted_Connection=True;TrustServerCertificate=True;";
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Configuration 'ConnectionStrings:DefaultConnection' is required and cannot be null, empty, or whitespace.");
+        }
 
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(connectionString));
 
         services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<AppDbContext>());
+
+        // Unit of Work
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+        // Repositories
+        services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IRoleRepository, RoleRepository>();
+        services.AddScoped<IDivisionRepository, DivisionRepository>();
+        services.AddScoped<ISectionRepository, SectionRepository>();
+        services.AddScoped<ISystemRepository, SystemRepository>();
+        services.AddScoped<ISystemSettingRepository, SystemSettingRepository>();
+        services.AddScoped<IUserSystemAccessRepository, UserSystemAccessRepository>();
+        services.AddScoped<IAdminScopeRepository, AdminScopeRepository>();
+        services.AddScoped<IAdminSystemAccessRepository, AdminSystemAccessRepository>();
+        services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+        services.AddScoped<ILoginHistoryRepository, LoginHistoryRepository>();
+        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+
+        // Queries
+        services.AddScoped<IDivisionQueries, DivisionQueries>();
 
         return services;
     }
