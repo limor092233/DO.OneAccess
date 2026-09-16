@@ -1,22 +1,35 @@
-using Microsoft.EntityFrameworkCore;
 using DO.OneAccess.Application.Common.Exceptions;
 using DO.OneAccess.Application.Common.Interfaces;
+using DO.OneAccess.Application.Common.Interfaces.Persistence;
+using DO.OneAccess.Application.Common.Mappings;
 using DO.OneAccess.Application.Common.Security;
 using DO.OneAccess.Application.DTOs.Audit;
 using DO.OneAccess.Application.DTOs.Divisions;
 using DO.OneAccess.Domain.Entities;
+using Mapster;
 
 namespace DO.OneAccess.Application.Services;
 
 public class DivisionService : IDivisionService
 {
-    private readonly IApplicationDbContext _context;
+    private readonly IDivisionRepository _divisionRepository;
+    private readonly IDivisionQueries _divisionQueries;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
+    private readonly IApplicationDbContext _context;
 
-    public DivisionService(IApplicationDbContext context, IAuditService auditService)
+    public DivisionService(
+        IDivisionRepository divisionRepository,
+        IDivisionQueries divisionQueries,
+        IUnitOfWork unitOfWork,
+        IAuditService auditService,
+        IApplicationDbContext context)
     {
-        _context = context;
-        _auditService = auditService;
+        _divisionRepository = divisionRepository ?? throw new ArgumentNullException(nameof(divisionRepository));
+        _divisionQueries = divisionQueries ?? throw new ArgumentNullException(nameof(divisionQueries));
+        _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
+        _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
+        _context = context ?? throw new ArgumentNullException(nameof(context));
     }
 
     public async Task<IReadOnlyList<DivisionDto>> GetAllDivisionsAsync(
@@ -26,26 +39,7 @@ public class DivisionService : IDivisionService
         var adminDivisionId = await AuthorizationHelper.RequireAdminOrAboveScopeAsync(
             _context, actorUserId, mustBeActive: false, cancellationToken);
 
-        var query = _context.Divisions
-            .AsNoTracking();
-
-        if (adminDivisionId.HasValue)
-        {
-            query = query.Where(d => d.DivisionId == adminDivisionId.Value);
-        }
-
-        return await query
-            .OrderBy(d => d.Name)
-            .Select(d => new DivisionDto
-            {
-                DivisionId = d.DivisionId,
-                Code = d.Code,
-                Name = d.Name,
-                Description = d.Description,
-                IsActive = d.IsActive,
-                CreatedAt = d.CreatedAt
-            })
-            .ToListAsync(cancellationToken);
+        return await _divisionQueries.GetAllAsync(adminDivisionId, cancellationToken);
     }
 
     public async Task<DivisionDto> GetDivisionByIdAsync(
@@ -57,24 +51,14 @@ public class DivisionService : IDivisionService
         await AuthorizationHelper.ValidateDivisionScopeAsync(
             _context, actorUserId, divisionId, mustBeActive: false, cancellationToken);
 
-        var division = await _context.Divisions
-            .AsNoTracking()
-            .FirstOrDefaultAsync(d => d.DivisionId == divisionId, cancellationToken);
+        var division = await _divisionQueries.GetByIdAsync(divisionId, cancellationToken);
 
         if (division == null)
         {
             throw new NotFoundException(nameof(Division), divisionId);
         }
 
-        return new DivisionDto
-        {
-            DivisionId = division.DivisionId,
-            Code = division.Code,
-            Name = division.Name,
-            Description = division.Description,
-            IsActive = division.IsActive,
-            CreatedAt = division.CreatedAt
-        };
+        return division;
     }
 
     public async Task<DivisionDto> CreateDivisionAsync(
@@ -95,8 +79,7 @@ public class DivisionService : IDivisionService
             throw new ValidationException(nameof(dto.Name), "Name is required.");
         }
 
-        var exists = await _context.Divisions
-            .AnyAsync(d => d.Code == dto.Code, cancellationToken);
+        var exists = await _divisionRepository.ExistsByCodeAsync(dto.Code, cancellationToken: cancellationToken);
 
         if (exists)
         {
@@ -113,8 +96,8 @@ public class DivisionService : IDivisionService
             CreatedBy = actorUserId
         };
 
-        _context.Divisions.Add(division);
-        await _context.SaveChangesAsync(cancellationToken);
+        _divisionRepository.Add(division);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {
@@ -125,15 +108,7 @@ public class DivisionService : IDivisionService
             NewValues = $"{{\"Code\":\"{division.Code}\",\"Name\":\"{division.Name}\"}}"
         }, cancellationToken);
 
-        return new DivisionDto
-        {
-            DivisionId = division.DivisionId,
-            Code = division.Code,
-            Name = division.Name,
-            Description = division.Description,
-            IsActive = division.IsActive,
-            CreatedAt = division.CreatedAt
-        };
+        return division.Adapt<DivisionDto>(MappingConfig.Config);
     }
 
     public async Task<DivisionDto> UpdateDivisionAsync(
@@ -145,8 +120,7 @@ public class DivisionService : IDivisionService
         await AuthorizationHelper.RequireSystemAdministratorAsync(
             _context, actorUserId, mustBeActive: true, cancellationToken);
 
-        var division = await _context.Divisions
-            .FirstOrDefaultAsync(d => d.DivisionId == divisionId, cancellationToken);
+        var division = await _divisionRepository.GetByIdAsync(divisionId, cancellationToken);
 
         if (division == null)
         {
@@ -173,7 +147,8 @@ public class DivisionService : IDivisionService
         division.UpdatedAt = DateTime.UtcNow;
         division.UpdatedBy = actorUserId;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        _divisionRepository.Update(division);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         var newValues = $"{{\"Name\":\"{division.Name}\",\"Description\":\"{division.Description}\",\"IsActive\":{division.IsActive.ToString().ToLowerInvariant()}}}";
 
@@ -187,15 +162,7 @@ public class DivisionService : IDivisionService
             NewValues = newValues
         }, cancellationToken);
 
-        return new DivisionDto
-        {
-            DivisionId = division.DivisionId,
-            Code = division.Code,
-            Name = division.Name,
-            Description = division.Description,
-            IsActive = division.IsActive,
-            CreatedAt = division.CreatedAt
-        };
+        return division.Adapt<DivisionDto>(MappingConfig.Config);
     }
 
     public async Task DeactivateDivisionAsync(
@@ -206,8 +173,7 @@ public class DivisionService : IDivisionService
         await AuthorizationHelper.RequireSystemAdministratorAsync(
             _context, actorUserId, mustBeActive: true, cancellationToken);
 
-        var division = await _context.Divisions
-            .FirstOrDefaultAsync(d => d.DivisionId == divisionId, cancellationToken);
+        var division = await _divisionRepository.GetByIdAsync(divisionId, cancellationToken);
 
         if (division == null)
         {
@@ -220,7 +186,8 @@ public class DivisionService : IDivisionService
         division.UpdatedAt = DateTime.UtcNow;
         division.UpdatedBy = actorUserId;
 
-        await _context.SaveChangesAsync(cancellationToken);
+        _divisionRepository.Update(division);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _auditService.LogAsync(new WriteAuditLogDto
         {

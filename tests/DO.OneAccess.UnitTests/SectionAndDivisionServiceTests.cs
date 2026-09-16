@@ -27,8 +27,16 @@ public class SectionAndDivisionServiceTests : IDisposable
 
         _context = new AppDbContext(options);
         _auditService = new AuditService(_context);
-        _divisionService = new DivisionService(_context, _auditService);
-        _sectionService = new SectionService(_context, _auditService);
+        var divRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.DivisionRepository(_context);
+        var uow = new DO.OneAccess.Infrastructure.Persistence.UnitOfWork(_context);
+        var fakeQueries = new DO.OneAccess.UnitTests.Fakes.FakeDivisionQueries(new[]
+        {
+            new DivisionDto { DivisionId = 1, Code = "D1", Name = "Division 1", IsActive = true, CreatedAt = DateTime.UtcNow },
+            new DivisionDto { DivisionId = 2, Code = "D2", Name = "Division 2", IsActive = true, CreatedAt = DateTime.UtcNow }
+        });
+        _divisionService = new DivisionService(divRepo, fakeQueries, uow, _auditService, _context);
+        var secRepo = new DO.OneAccess.Infrastructure.Persistence.Repositories.SectionRepository(_context);
+        _sectionService = new SectionService(secRepo, divRepo, uow, _auditService, _context);
 
         SeedDatabase();
     }
