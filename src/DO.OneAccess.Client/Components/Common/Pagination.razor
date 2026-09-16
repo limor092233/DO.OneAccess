@@ -1,0 +1,51 @@
+@namespace DO.OneAccess.Client.Components.Common
+
+@if (TotalPages > 1)
+{
+    <nav aria-label="Page navigation" class="d-flex justify-content-between align-items-center mt-3">
+        <div class="text-muted small">
+            Page @CurrentPage of @TotalPages (@TotalCount total items)
+        </div>
+        <ul class="pagination pagination-sm mb-0">
+            <li class="page-item @(HasPreviousPage ? "" : "disabled")">
+                <button class="page-link" @onclick="() => GoToPage(CurrentPage - 1)" disabled="@(!HasPreviousPage)">
+                    Previous
+                </button>
+            </li>
+            @for (int p = StartPage; p <= EndPage; p++)
+            {
+                var pageNumber = p;
+                <li class="page-item @(pageNumber == CurrentPage ? "active" : "")">
+                    <button class="page-link" @onclick="() => GoToPage(pageNumber)">
+                        @pageNumber
+                    </button>
+                </li>
+            }
+            <li class="page-item @(HasNextPage ? "" : "disabled")">
+                <button class="page-link" @onclick="() => GoToPage(CurrentPage + 1)" disabled="@(!HasNextPage)">
+                    Next
+                </button>
+            </li>
+        </ul>
+    </nav>
+}
+
+@code {
+    [Parameter] public int CurrentPage { get; set; } = 1;
+    [Parameter] public int TotalPages { get; set; } = 1;
+    [Parameter] public int TotalCount { get; set; }
+    [Parameter] public bool HasNextPage { get; set; }
+    [Parameter] public bool HasPreviousPage { get; set; }
+    [Parameter] public EventCallback<int> OnPageChanged { get; set; }
+
+    private int StartPage => Math.Max(1, CurrentPage - 2);
+    private int EndPage => Math.Min(TotalPages, CurrentPage + 2);
+
+    private async Task GoToPage(int page)
+    {
+        if (page >= 1 && page <= TotalPages && page != CurrentPage)
+        {
+            await OnPageChanged.InvokeAsync(page);
+        }
+    }
+}

@@ -1,0 +1,490 @@
+@page "/sysadmin/scopes"
+@attribute [Authorize(Roles = "SYSTEM_ADMINISTRATOR")]
+@inject IAdminScopeApiClient AdminScopeClient
+@inject IUserApiClient UserClient
+@inject IDivisionApiClient DivisionClient
+@inject ISystemApiClient SystemClient
+
+<PageTitle>Manage Administrator Scopes — DO.OneAccess</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="fw-bold text-dark mb-1">Administrator Authority & Scopes</h3>
+        <p class="text-muted small mb-0">Configure organizational division scopes and system-management grants for administrators.</p>
+    </div>
+    <div>
+        @if (_activeTab == "divisions")
+        {
+            <button type="button" class="btn btn-primary d-flex align-items-center" @onclick="OpenAssignScopeModal">
+                <Icon Name="plus" Size="16" />
+                <span class="ms-1">Assign Division Scope</span>
+            </button>
+        }
+        else
+        {
+            <button type="button" class="btn btn-primary d-flex align-items-center" @onclick="OpenGrantSystemModal">
+                <Icon Name="plus" Size="16" />
+                <span class="ms-1">Grant System Authority</span>
+            </button>
+        }
+    </div>
+</div>
+
+<ErrorMessage Title="Error" Message="@_errorMessage" Errors="@_errors" />
+
+<!-- Navigation Tabs -->
+<ul class="nav nav-tabs mb-4">
+    <li class="nav-item">
+        <button type="button" class="nav-link @(_activeTab == "divisions" ? "active fw-semibold" : "")" @onclick="SelectDivisionsTab">
+            <span class="me-1"><Icon Name="building" Size="16" /></span>
+            <span>Division Scopes (@(_scopes?.Count ?? 0))</span>
+        </button>
+    </li>
+    <li class="nav-item">
+        <button type="button" class="nav-link @(_activeTab == "systems" ? "active fw-semibold" : "")" @onclick="SelectSystemsTab">
+            <span class="me-1"><Icon Name="server" Size="16" /></span>
+            <span>System Management Grants (@(_grants?.Count ?? 0))</span>
+        </button>
+    </li>
+</ul>
+
+@if (_isLoading)
+{
+    <LoadingSpinner Text="Loading administrator scope configurations..." />
+}
+else if (_activeTab == "divisions")
+{
+    @if (_scopes == null || _scopes.Count == 0)
+    {
+        <div class="card shadow-sm border-0">
+            <EmptyState IconName="shield"
+                        Title="No Division Scopes Assigned"
+                        Description="No administrators have been assigned division authority yet." />
+        </div>
+    }
+    else
+    {
+        <div class="card shadow-sm border-0 overflow-hidden">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-3">Administrator User ID</th>
+                            <th>Division Assigned</th>
+                            <th>Assigned At</th>
+                            <th class="text-end pe-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var scope in _scopes)
+                        {
+                            <tr>
+                                <td class="ps-3 font-monospace small">@scope.AdministratorUserId</td>
+                                <td><span class="badge bg-light text-dark border fs-6">@scope.DivisionName</span></td>
+                                <td class="small text-muted">@scope.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="text-end pe-3">
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmRevokeScope(scope)" title="Revoke Scope">
+                                        <Icon Name="trash" Size="14" />
+                                        <span class="ms-1 small">Revoke</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+else
+{
+    @if (_grants == null || _grants.Count == 0)
+    {
+        <div class="card shadow-sm border-0">
+            <EmptyState IconName="server"
+                        Title="No System Management Grants"
+                        Description="No administrators have been granted system-management authority yet." />
+        </div>
+    }
+    else
+    {
+        <div class="card shadow-sm border-0 overflow-hidden">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="ps-3">Administrator User ID</th>
+                            <th>System Authorized</th>
+                            <th>Granted At</th>
+                            <th class="text-end pe-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var grant in _grants)
+                        {
+                            <tr>
+                                <td class="ps-3 font-monospace small">@grant.AdministratorUserId</td>
+                                <td><span class="badge bg-light text-dark border fs-6">@grant.SystemName</span></td>
+                                <td class="small text-muted">@grant.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                <td class="text-end pe-3">
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmRevokeGrant(grant)" title="Revoke Grant">
+                                        <Icon Name="trash" Size="14" />
+                                        <span class="ms-1 small">Revoke</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+
+<!-- Assign Division Scope Modal -->
+<ModalDialog IsOpen="@_showAssignScopeModal" Title="Assign Administrator Division Scope" OnClose="() => _showAssignScopeModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Administrator User</label>
+            <select class="form-select" @bind="_assignScopeModel.AdministratorUserId">
+                <option value="@Guid.Empty">Select Administrator...</option>
+                @if (_adminUsers != null)
+                {
+                    @foreach (var u in _adminUsers)
+                    {
+                        <option value="@u.UserId">@u.Username</option>
+                    }
+                }
+            </select>
+            <div class="form-text small">Each administrator may be assigned exactly one division scope.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Assigned Division</label>
+            <select class="form-select" @bind="_assignScopeModel.DivisionId">
+                <option value="0">Select Division...</option>
+                @if (_divisions != null)
+                {
+                    @foreach (var d in _divisions)
+                    {
+                        <option value="@d.DivisionId">@d.Name (@d.Code)</option>
+                    }
+                }
+            </select>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showAssignScopeModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="AssignScopeAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Assign Scope
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Grant System Access Modal -->
+<ModalDialog IsOpen="@_showGrantSystemModal" Title="Grant Administrator System Management Authority" OnClose="() => _showGrantSystemModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Administrator User</label>
+            <select class="form-select" @bind="_grantSystemModel.AdministratorUserId">
+                <option value="@Guid.Empty">Select Administrator...</option>
+                @if (_adminUsers != null)
+                {
+                    @foreach (var u in _adminUsers)
+                    {
+                        <option value="@u.UserId">@u.Username</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Office System</label>
+            <select class="form-select" @bind="_grantSystemModel.SystemId">
+                <option value="@Guid.Empty">Select System...</option>
+                @if (_systems != null)
+                {
+                    @foreach (var s in _systems)
+                    {
+                        <option value="@s.SystemId">@s.SystemName (@s.SystemCode)</option>
+                    }
+                }
+            </select>
+            <div class="form-text small">Authorizes this administrator to manage access overrides for this system.</div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showGrantSystemModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="GrantSystemAccessAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Grant Authority
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Revoke Scope Confirmation -->
+<ConfirmDialog IsOpen="@_showRevokeScopeConfirm"
+               Title="Revoke Division Scope"
+               Message="@($"Are you sure you want to revoke division scope for division '{_selectedScope?.DivisionName}'?")"
+               ConfirmText="Revoke Scope"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="RevokeScopeAsync"
+               OnCancel="() => _showRevokeScopeConfirm = false" />
+
+<!-- Revoke Grant Confirmation -->
+<ConfirmDialog IsOpen="@_showRevokeGrantConfirm"
+               Title="Revoke System Authority"
+               Message="@($"Are you sure you want to revoke system authority over '{_selectedGrant?.SystemName}'?")"
+               ConfirmText="Revoke Grant"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="RevokeGrantAsync"
+               OnCancel="() => _showRevokeGrantConfirm = false" />
+
+@code {
+    private string _activeTab = "divisions";
+    private IReadOnlyList<AdminScopeDto>? _scopes;
+    private IReadOnlyList<AdminSystemAccessDto>? _grants;
+    private IReadOnlyList<UserDto>? _adminUsers;
+    private IReadOnlyList<DivisionDto>? _divisions;
+    private IReadOnlyList<SystemDto>? _systems;
+
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+    private IDictionary<string, string[]>? _errors;
+
+    private bool _showAssignScopeModal;
+    private AssignScopeFormModel _assignScopeModel = new();
+
+    private bool _showGrantSystemModal;
+    private GrantSystemFormModel _grantSystemModel = new();
+
+    private bool _showRevokeScopeConfirm;
+    private AdminScopeDto? _selectedScope;
+
+    private bool _showRevokeGrantConfirm;
+    private AdminSystemAccessDto? _selectedGrant;
+
+    private sealed class AssignScopeFormModel
+    {
+        public Guid AdministratorUserId { get; set; }
+        public int DivisionId { get; set; }
+    }
+
+    private sealed class GrantSystemFormModel
+    {
+        public Guid AdministratorUserId { get; set; }
+        public Guid SystemId { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPrerequisitesAsync();
+        await LoadDataAsync();
+    }
+
+    private void SelectDivisionsTab() => SwitchTab("divisions");
+    private void SelectSystemsTab() => SwitchTab("systems");
+
+    private void SwitchTab(string tab)
+    {
+        _activeTab = tab;
+        _errorMessage = null;
+        _errors = null;
+    }
+
+    private async Task LoadPrerequisitesAsync()
+    {
+        try
+        {
+            var userResult = await UserClient.GetUsersAsync(new UserQueryDto { PageSize = 100, IsActive = true });
+            _adminUsers = userResult.Items.Where(u => u.RoleCode == "ADMINISTRATOR").ToList();
+            _divisions = await DivisionClient.GetAllDivisionsAsync();
+            _systems = await SystemClient.GetAllSystemsAsync();
+        }
+        catch
+        {
+            // best-effort load
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _scopes = await AdminScopeClient.GetAllScopesAsync();
+            _grants = await AdminScopeClient.GetAllGrantsAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        catch
+        {
+            _errorMessage = "Failed to load administrator scopes and grants.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OpenAssignScopeModal()
+    {
+        _assignScopeModel = new AssignScopeFormModel
+        {
+            AdministratorUserId = _adminUsers?.FirstOrDefault()?.UserId ?? Guid.Empty,
+            DivisionId = _divisions?.FirstOrDefault()?.DivisionId ?? 0
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showAssignScopeModal = true;
+    }
+
+    private async Task AssignScopeAsync()
+    {
+        if (_assignScopeModel.AdministratorUserId == Guid.Empty || _assignScopeModel.DivisionId == 0)
+        {
+            _errorMessage = "Please select both an administrator and a division.";
+            return;
+        }
+
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var dto = new AssignAdminScopeDto
+            {
+                AdministratorUserId = _assignScopeModel.AdministratorUserId,
+                DivisionId = _assignScopeModel.DivisionId
+            };
+            await AdminScopeClient.AssignDivisionScopeAsync(dto);
+            _showAssignScopeModal = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmRevokeScope(AdminScopeDto scope)
+    {
+        _selectedScope = scope;
+        _showRevokeScopeConfirm = true;
+    }
+
+    private async Task RevokeScopeAsync()
+    {
+        if (_selectedScope == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await AdminScopeClient.RevokeDivisionScopeAsync(_selectedScope.AdministratorScopeId);
+            _showRevokeScopeConfirm = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void OpenGrantSystemModal()
+    {
+        _grantSystemModel = new GrantSystemFormModel
+        {
+            AdministratorUserId = _adminUsers?.FirstOrDefault()?.UserId ?? Guid.Empty,
+            SystemId = _systems?.FirstOrDefault()?.SystemId ?? Guid.Empty
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showGrantSystemModal = true;
+    }
+
+    private async Task GrantSystemAccessAsync()
+    {
+        if (_grantSystemModel.AdministratorUserId == Guid.Empty || _grantSystemModel.SystemId == Guid.Empty)
+        {
+            _errorMessage = "Please select both an administrator and a system.";
+            return;
+        }
+
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var dto = new GrantAdminSystemAccessDto
+            {
+                AdministratorUserId = _grantSystemModel.AdministratorUserId,
+                SystemId = _grantSystemModel.SystemId
+            };
+            await AdminScopeClient.GrantAccessAsync(dto);
+            _showGrantSystemModal = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmRevokeGrant(AdminSystemAccessDto grant)
+    {
+        _selectedGrant = grant;
+        _showRevokeGrantConfirm = true;
+    }
+
+    private async Task RevokeGrantAsync()
+    {
+        if (_selectedGrant == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await AdminScopeClient.RevokeAccessAsync(_selectedGrant.AdministratorSystemAccessId);
+            _showRevokeGrantConfirm = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

@@ -1,0 +1,583 @@
+@page "/setup"
+@attribute [AllowAnonymous]
+@using System.Text.RegularExpressions
+@using DO.OneAccess.Application.DTOs.Setup
+@using DO.OneAccess.Client.Components.Common
+@using DO.OneAccess.Client.Services
+@using DO.OneAccess.Client.Services.Api
+@inject ISetupApiClient SetupClient
+@inject ISetupStateService SetupState
+@inject NavigationManager Navigation
+
+<PageTitle>First Run Setup — DO.OneAccess</PageTitle>
+
+<div class="w-100 d-flex justify-content-center">
+    <div class="card setup-card border-0 rounded-3 bg-white w-100" style="max-width: 620px;">
+        <div class="card-header bg-white border-0 pt-4 px-4 px-sm-5 pb-2 rounded-top-3">
+            <div class="d-flex align-items-center">
+                <div class="me-3 text-dark" style="color: #000 !important;">
+                    <Icon Name="shield" Size="34" />
+                </div>
+                <div>
+                    <h4 class="mb-1 fw-bold text-dark" style="color: #000 !important;">DO.OneAccess</h4>
+                    <p class="text-muted small mb-0">Secure System Bootstrap &amp; Initial Administrator Setup</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-body px-4 px-sm-5 py-4">
+            @if (IsCheckingStatus)
+            {
+                <div class="text-center py-5">
+                    <LoadingSpinner Text="Checking system initialization status..." />
+                </div>
+            }
+            else if (SetupCompleted)
+            {
+                <hr class="border-secondary-subtle my-2 mb-4" />
+                <div class="text-center py-3">
+                    <div class="rounded-circle bg-success-subtle text-success d-inline-flex align-items-center justify-content-center mb-3"
+                         style="width: 64px; height: 64px;">
+                        <Icon Name="check" Size="32" />
+                    </div>
+                    <h4 class="fw-bold text-dark mb-2">Initialization Succeeded!</h4>
+                    <p class="text-muted mb-4" style="max-width: 440px; margin-left: auto; margin-right: auto;">
+                        The initial System Administrator account <strong>@FormModel.Username</strong> has been successfully provisioned.
+                        First Run Setup is now permanently closed.
+                    </p>
+                    <a href="login?initialized=true" class="btn btn-primary px-4 py-2 fw-semibold">
+                        Proceed to Sign In
+                    </a>
+                </div>
+            }
+            else
+            {
+                <!-- Wizard Progress Indicator -->
+                <div class="wizard-indicator mb-4 pb-3 border-bottom">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="d-flex align-items-center @(CurrentStep == 1 ? "text-primary fw-bold" : "text-success fw-semibold")">
+                            <span class="rounded-circle me-2 d-inline-flex align-items-center justify-content-center @(CurrentStep == 1 ? "bg-primary text-white" : "bg-success text-white")"
+                                  style="width: 28px; height: 28px; font-size: 0.85rem; flex-shrink: 0;">
+                                @if (CurrentStep > 1)
+                                {
+                                    <Icon Name="check" Size="16" />
+                                }
+                                else
+                                {
+                                    <span>1</span>
+                                }
+                            </span>
+                            <span class="fw-semibold small">Employee Information</span>
+                        </div>
+
+                        <div class="flex-grow-1 mx-2 mx-md-3 @(CurrentStep > 1 ? "bg-success" : "bg-secondary-subtle")"
+                             style="height: 2px; min-width: 16px;"></div>
+
+                        <div class="d-flex align-items-center @(CurrentStep == 2 ? "text-primary fw-bold" : "text-muted")">
+                            <span class="rounded-circle me-2 d-inline-flex align-items-center justify-content-center @(CurrentStep == 2 ? "bg-primary text-white" : "bg-light text-muted border")"
+                                  style="width: 28px; height: 28px; font-size: 0.85rem; flex-shrink: 0;">
+                                <span>2</span>
+                            </span>
+                            <span class="fw-semibold small">Account Credentials</span>
+                        </div>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(GeneralError))
+                {
+                    <div class="alert alert-danger py-2 px-3 small d-flex align-items-center mb-4" role="alert">
+                        <span class="me-2"><Icon Name="alert-triangle" Size="18" /></span>
+                        <span>@GeneralError</span>
+                    </div>
+                }
+
+                <EditForm Model="@FormModel" OnSubmit="OnFormSubmit">
+                    @if (CurrentStep == 1)
+                    {
+                        <!-- STEP 1 — EMPLOYEE INFORMATION -->
+                        <h6 class="text-uppercase text-secondary fw-bold small border-bottom pb-2 mb-3" style="letter-spacing: 0.05em;">
+                            Employee Information
+                        </h6>
+
+                        <!-- 1. Bootstrap Token: full width -->
+                        <div class="mb-3">
+                            <label for="bootstrapToken" class="form-label fw-semibold text-dark small mb-1">
+                                One-Time Bootstrap Token <span class="text-danger">*</span>
+                            </label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-light text-muted border-end-0 px-3">
+                                    <Icon Name="key" Size="16" />
+                                </span>
+                                <InputText id="bootstrapToken"
+                                           class="form-control py-2 border-start-0 font-monospace"
+                                           placeholder="Enter token from server console or environment"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="BootstrapToken" />
+                            </div>
+                            <div class="form-text text-muted mt-1 small">
+                                In local development, check your terminal stdout for <code>[FIRST RUN SETUP]</code>.
+                            </div>
+                            @if (ShowStep1Errors && FieldErrors.TryGetValue("BootstrapToken", out var tokenErr))
+                            {
+                                <div class="text-danger small mt-1">@tokenErr[0]</div>
+                            }
+                        </div>
+
+                        <!-- 2. Employee Number + Position: side-by-side -->
+                        <div class="row g-3 mb-3">
+                            <div class="col-12 col-md-6">
+                                <label for="employeeNumber" class="form-label fw-semibold text-dark small mb-1">
+                                    Employee Number <span class="text-danger">*</span>
+                                </label>
+                                <InputText id="employeeNumber"
+                                           class="form-control py-2"
+                                           placeholder="e.g. SA-0001"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.EmployeeNumber" />
+                                @if (ShowStep1Errors && FieldErrors.TryGetValue(nameof(FormModel.EmployeeNumber), out var empNumErr))
+                                {
+                                    <div class="text-danger small mt-1">@empNumErr[0]</div>
+                                }
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label for="position" class="form-label fw-semibold text-dark small mb-1">Position</label>
+                                <InputText id="position"
+                                           class="form-control py-2"
+                                           placeholder="e.g. Lead Systems Administrator"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.Position" />
+                                @if (ShowStep1Errors && FieldErrors.TryGetValue(nameof(FormModel.Position), out var posErr))
+                                {
+                                    <div class="text-danger small mt-1">@posErr[0]</div>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- 3. First Name + Middle Name: side-by-side -->
+                        <div class="row g-3 mb-3">
+                            <div class="col-12 col-md-6">
+                                <label for="firstName" class="form-label fw-semibold text-dark small mb-1">
+                                    First Name <span class="text-danger">*</span>
+                                </label>
+                                <InputText id="firstName"
+                                           class="form-control py-2"
+                                           placeholder="First Name"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.FirstName" />
+                                @if (ShowStep1Errors && FieldErrors.TryGetValue(nameof(FormModel.FirstName), out var fnErr))
+                                {
+                                    <div class="text-danger small mt-1">@fnErr[0]</div>
+                                }
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label for="middleName" class="form-label fw-semibold text-dark small mb-1">Middle Name</label>
+                                <InputText id="middleName"
+                                           class="form-control py-2"
+                                           placeholder="Optional"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.MiddleName" />
+                                @if (ShowStep1Errors && FieldErrors.TryGetValue(nameof(FormModel.MiddleName), out var mnErr))
+                                {
+                                    <div class="text-danger small mt-1">@mnErr[0]</div>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- 4. Last Name + Official Email Address: side-by-side -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-12 col-md-6">
+                                <label for="lastName" class="form-label fw-semibold text-dark small mb-1">
+                                    Last Name <span class="text-danger">*</span>
+                                </label>
+                                <InputText id="lastName"
+                                           class="form-control py-2"
+                                           placeholder="Last Name"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.LastName" />
+                                @if (ShowStep1Errors && FieldErrors.TryGetValue(nameof(FormModel.LastName), out var lnErr))
+                                {
+                                    <div class="text-danger small mt-1">@lnErr[0]</div>
+                                }
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label for="email" class="form-label fw-semibold text-dark small mb-1">
+                                    Official Email Address <span class="text-danger">*</span>
+                                </label>
+                                <InputText id="email"
+                                           type="email"
+                                           class="form-control py-2"
+                                           placeholder="sysadmin@organization.gov"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.Email" />
+                                @if (ShowStep1Errors && FieldErrors.TryGetValue(nameof(FormModel.Email), out var emailErr))
+                                {
+                                    <div class="text-danger small mt-1">@emailErr[0]</div>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end pt-2">
+                            <button type="button" class="btn btn-primary px-4 py-2 fw-semibold" id="btnNextStep" @onclick="HandleNextStep">
+                                <span>Next &rarr;</span>
+                            </button>
+                        </div>
+                    }
+                    else if (CurrentStep == 2)
+                    {
+                        <!-- STEP 2 — ACCOUNT CREDENTIALS -->
+                        <h6 class="text-uppercase text-secondary fw-bold small border-bottom pb-2 mb-3" style="letter-spacing: 0.05em;">
+                            Account Credentials
+                        </h6>
+
+                        <!-- 1. Username + Password: side-by-side -->
+                        <div class="row g-3 mb-3">
+                            <div class="col-12 col-md-6">
+                                <label for="username" class="form-label fw-semibold text-dark small mb-1">
+                                    Username <span class="text-danger">*</span>
+                                </label>
+                                <InputText id="username"
+                                           class="form-control py-2"
+                                           placeholder="Choose username"
+                                           autocomplete="username"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.Username" />
+                                @if (ShowStep2Errors && FieldErrors.TryGetValue(nameof(FormModel.Username), out var userErr))
+                                {
+                                    <div class="text-danger small mt-1">@userErr[0]</div>
+                                }
+                            </div>
+                            <div class="col-12 col-md-6">
+                                <label for="password" class="form-label fw-semibold text-dark small mb-1">
+                                    Password <span class="text-danger">*</span>
+                                </label>
+                                <InputText id="password"
+                                           type="password"
+                                           class="form-control py-2"
+                                           placeholder="Enter password"
+                                           autocomplete="new-password"
+                                           disabled="@IsSubmitting"
+                                           @bind-Value="FormModel.Password" />
+                                @if (ShowStep2Errors && FieldErrors.TryGetValue(nameof(FormModel.Password), out var pwErr))
+                                {
+                                    <div class="text-danger small mt-1">@pwErr[0]</div>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- 2. Confirm Password: full-width -->
+                        <div class="mb-4">
+                            <label for="confirmPassword" class="form-label fw-semibold text-dark small mb-1">
+                                Confirm Password <span class="text-danger">*</span>
+                            </label>
+                            <InputText id="confirmPassword"
+                                       type="password"
+                                       class="form-control py-2"
+                                       placeholder="Re-enter password"
+                                       autocomplete="new-password"
+                                       disabled="@IsSubmitting"
+                                       @bind-Value="FormModel.ConfirmPassword" />
+                            @if (ShowStep2Errors && FieldErrors.TryGetValue(nameof(FormModel.ConfirmPassword), out var cpwErr))
+                            {
+                                <div class="text-danger small mt-1">@cpwErr[0]</div>
+                            }
+                        </div>
+
+                        <!-- Read-only Initial System Account info -->
+                        <div class="card bg-light border-0 p-3 mb-4 rounded-3">
+                            <div class="d-flex align-items-center">
+                                <div class="text-primary me-3">
+                                    <Icon Name="shield" Size="24" />
+                                </div>
+                                <div>
+                                    <div class="fw-semibold text-dark">System Administrator</div>
+                                    <small class="text-muted">Initial system account</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 pt-2">
+                            <button type="button" class="btn btn-outline-secondary px-4 py-2 fw-semibold" id="btnBackStep" disabled="@IsSubmitting" @onclick="HandlePreviousStep">
+                                <span>&larr; Back</span>
+                            </button>
+                            <button type="submit" class="btn btn-primary px-4 py-2 fw-semibold" id="btnCompleteSetup" disabled="@IsSubmitting">
+                                @if (IsSubmitting)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                    <span>Provisioning Administrator...</span>
+                                }
+                                else
+                                {
+                                    <span>Complete Setup</span>
+                                }
+                            </button>
+                        </div>
+                    }
+                </EditForm>
+            }
+        </div>
+        <div class="card-footer bg-light border-0 py-3 text-center">
+            <small class="text-muted">DO.OneAccess Enterprise Access Portal &copy; @DateTime.UtcNow.Year</small>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly Regex EmailRegex = new(
+        @"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public int CurrentStep { get; set; } = 1;
+    public FirstRunSetupDto FormModel { get; set; } = new();
+    public string BootstrapToken { get; set; } = string.Empty;
+
+    public bool IsCheckingStatus { get; set; } = true;
+    public bool IsSubmitting { get; set; }
+    public bool SetupCompleted { get; set; }
+    public string? GeneralError { get; set; }
+    public Dictionary<string, string[]> FieldErrors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool ShowStep1Errors { get; set; } = false;
+    public bool ShowStep2Errors { get; set; } = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ShowStep1Errors = false;
+        ShowStep2Errors = false;
+        FieldErrors.Clear();
+
+        var isInitialized = await SetupState.CheckInitializationAsync();
+        if (isInitialized)
+        {
+            Navigation.NavigateTo("login");
+            return;
+        }
+
+        IsCheckingStatus = false;
+    }
+
+    public void HandleNextStep()
+    {
+        ShowStep1Errors = true;
+        GeneralError = null;
+        if (ValidateStep1())
+        {
+            CurrentStep = 2;
+        }
+    }
+
+    public void HandlePreviousStep()
+    {
+        GeneralError = null;
+        CurrentStep = 1;
+    }
+
+    public bool ValidateStep1()
+    {
+        FieldErrors.Remove("BootstrapToken");
+        FieldErrors.Remove(nameof(FormModel.EmployeeNumber));
+        FieldErrors.Remove(nameof(FormModel.FirstName));
+        FieldErrors.Remove(nameof(FormModel.MiddleName));
+        FieldErrors.Remove(nameof(FormModel.LastName));
+        FieldErrors.Remove(nameof(FormModel.Email));
+        FieldErrors.Remove(nameof(FormModel.Position));
+
+        var isValid = true;
+
+        if (string.IsNullOrWhiteSpace(BootstrapToken))
+        {
+            FieldErrors["BootstrapToken"] = new[] { "Bootstrap token is required." };
+            isValid = false;
+        }
+
+        if (string.IsNullOrWhiteSpace(FormModel.EmployeeNumber))
+        {
+            FieldErrors[nameof(FormModel.EmployeeNumber)] = new[] { "Employee Number is required." };
+            isValid = false;
+        }
+        else if (FormModel.EmployeeNumber.Length > 50)
+        {
+            FieldErrors[nameof(FormModel.EmployeeNumber)] = new[] { "Employee Number must not exceed 50 characters." };
+            isValid = false;
+        }
+
+        if (string.IsNullOrWhiteSpace(FormModel.FirstName))
+        {
+            FieldErrors[nameof(FormModel.FirstName)] = new[] { "First Name is required." };
+            isValid = false;
+        }
+        else if (FormModel.FirstName.Length > 100)
+        {
+            FieldErrors[nameof(FormModel.FirstName)] = new[] { "First Name must not exceed 100 characters." };
+            isValid = false;
+        }
+
+        if (FormModel.MiddleName != null && FormModel.MiddleName.Length > 100)
+        {
+            FieldErrors[nameof(FormModel.MiddleName)] = new[] { "Middle Name must not exceed 100 characters." };
+            isValid = false;
+        }
+
+        if (string.IsNullOrWhiteSpace(FormModel.LastName))
+        {
+            FieldErrors[nameof(FormModel.LastName)] = new[] { "Last Name is required." };
+            isValid = false;
+        }
+        else if (FormModel.LastName.Length > 100)
+        {
+            FieldErrors[nameof(FormModel.LastName)] = new[] { "Last Name must not exceed 100 characters." };
+            isValid = false;
+        }
+
+        if (string.IsNullOrWhiteSpace(FormModel.Email))
+        {
+            FieldErrors[nameof(FormModel.Email)] = new[] { "Email address is required." };
+            isValid = false;
+        }
+        else if (FormModel.Email.Length > 200)
+        {
+            FieldErrors[nameof(FormModel.Email)] = new[] { "Email address must not exceed 200 characters." };
+            isValid = false;
+        }
+        else if (!EmailRegex.IsMatch(FormModel.Email))
+        {
+            FieldErrors[nameof(FormModel.Email)] = new[] { "Email address is not in a valid format." };
+            isValid = false;
+        }
+
+        if (FormModel.Position != null && FormModel.Position.Length > 100)
+        {
+            FieldErrors[nameof(FormModel.Position)] = new[] { "Position must not exceed 100 characters." };
+            isValid = false;
+        }
+
+        return isValid;
+    }
+
+    public bool ValidateStep2()
+    {
+        FieldErrors.Remove(nameof(FormModel.Username));
+        FieldErrors.Remove(nameof(FormModel.Password));
+        FieldErrors.Remove(nameof(FormModel.ConfirmPassword));
+
+        var isValid = true;
+
+        if (string.IsNullOrWhiteSpace(FormModel.Username))
+        {
+            FieldErrors[nameof(FormModel.Username)] = new[] { "Username is required." };
+            isValid = false;
+        }
+        else if (FormModel.Username.Length > 50)
+        {
+            FieldErrors[nameof(FormModel.Username)] = new[] { "Username must not exceed 50 characters." };
+            isValid = false;
+        }
+
+        if (string.IsNullOrWhiteSpace(FormModel.Password))
+        {
+            FieldErrors[nameof(FormModel.Password)] = new[] { "Password is required." };
+            isValid = false;
+        }
+
+        if (string.IsNullOrWhiteSpace(FormModel.ConfirmPassword))
+        {
+            FieldErrors[nameof(FormModel.ConfirmPassword)] = new[] { "Password confirmation is required." };
+            isValid = false;
+        }
+        else if (!string.Equals(FormModel.Password, FormModel.ConfirmPassword, StringComparison.Ordinal))
+        {
+            FieldErrors[nameof(FormModel.ConfirmPassword)] = new[] { "Passwords do not match." };
+            isValid = false;
+        }
+
+        return isValid;
+    }
+
+    public async Task HandleSetupSubmit()
+    {
+        GeneralError = null;
+        ShowStep1Errors = true;
+        ShowStep2Errors = true;
+
+        if (!ValidateStep1())
+        {
+            CurrentStep = 1;
+            return;
+        }
+
+        if (!ValidateStep2())
+        {
+            return;
+        }
+
+        IsSubmitting = true;
+        try
+        {
+            var result = await SetupClient.SetupAsync(FormModel, BootstrapToken);
+            if (result.Success)
+            {
+                SetupState.MarkInitialized();
+                SetupCompleted = true;
+            }
+        }
+        catch (ProblemDetailsException pde)
+        {
+            if ((int)pde.StatusCode == 409)
+            {
+                SetupState.MarkInitialized();
+                Navigation.NavigateTo("login?alreadyInitialized=true");
+                return;
+            }
+
+            if ((int)pde.StatusCode == 401)
+            {
+                GeneralError = "Invalid or expired bootstrap token. Please verify the token from your host console.";
+                return;
+            }
+
+            if ((int)pde.StatusCode == 429)
+            {
+                GeneralError = !string.IsNullOrWhiteSpace(pde.Detail)
+                    ? pde.Detail
+                    : "Too many setup attempts. Please wait and try again later.";
+                return;
+            }
+
+            if ((int)pde.StatusCode == 503)
+            {
+                GeneralError = "Setup is temporarily unavailable. Bootstrap token has not been configured in the server environment.";
+                return;
+            }
+
+            GeneralError = pde.GetFirstErrorMessage();
+            if (pde.Errors != null)
+            {
+                ShowStep1Errors = true;
+                ShowStep2Errors = true;
+                foreach (var (k, v) in pde.Errors)
+                {
+                    FieldErrors[k] = v;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            GeneralError = "An unexpected error occurred during setup. Please check your network connection and try again.";
+        }
+        finally
+        {
+            IsSubmitting = false;
+        }
+    }
+
+    private async Task OnFormSubmit()
+    {
+        if (CurrentStep == 1)
+        {
+            HandleNextStep();
+        }
+        else if (CurrentStep == 2)
+        {
+            await HandleSetupSubmit();
+        }
+    }
+}

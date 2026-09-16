@@ -1,0 +1,215 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@inject IClientAuthService AuthService
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject ISetupStateService SetupState
+
+<PageTitle>Sign In — DO.OneAccess</PageTitle>
+
+<style>
+    .password-toggle-btn {
+        color: #6c757d;
+        transition: color 0.15s ease-in-out;
+    }
+    .password-toggle-btn:hover {
+        color: #212529 !important;
+    }
+    .password-toggle-btn:focus-visible {
+        outline: 2px solid #3b82f6;
+        outline-offset: -2px;
+        border-radius: 0.25rem;
+    }
+    .password-toggle-btn:focus:not(:focus-visible) {
+        box-shadow: none !important;
+        outline: none !important;
+    }
+</style>
+
+<div class="w-100 d-flex justify-content-center">
+    <div class="card login-card border-0 rounded-3 bg-white w-100" style="max-width: 440px;">
+        <div class="card-body p-4 p-sm-5">
+            <!-- Branding Header -->
+            <div class="text-center mb-3">
+                <div class="text-dark mb-2" style="color: #000 !important;">
+                    <Icon Name="shield" Size="38" />
+                </div>
+                <h4 class="fw-bold text-dark mb-1" style="color: #000 !important;">DO.OneAccess</h4>
+                <p class="text-muted small mb-0">Enterprise Access Portal</p>
+            </div>
+
+            <hr class="border-secondary-subtle my-4" />
+
+            @if (Initialized == true)
+            {
+                <div class="alert alert-success py-2 px-3 small d-flex align-items-center mb-3 rounded-2" role="alert">
+                    <span class="me-2 text-success"><Icon Name="check" Size="16" /></span>
+                    <span>System Administrator initialized successfully! You may now sign in.</span>
+                </div>
+            }
+
+            @if (AlreadyInitialized == true)
+            {
+                <div class="alert alert-info py-2 px-3 small d-flex align-items-center mb-3 rounded-2" role="alert">
+                    <span class="me-2 text-info"><Icon Name="info" Size="16" /></span>
+                    <span>System is already initialized. First Run Setup is disabled.</span>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_errorMessage))
+            {
+                <div class="alert alert-danger py-2 px-3 small d-flex align-items-center mb-3 rounded-2" role="alert">
+                    <span class="me-2 text-danger flex-shrink-0"><Icon Name="alert-triangle" Size="16" /></span>
+                    <span>@_errorMessage</span>
+                </div>
+            }
+
+            <EditForm Model="@_loginModel" OnValidSubmit="HandleLogin">
+                <div class="mb-3">
+                    <label for="usernameInput" class="form-label small fw-semibold text-dark mb-1">Username</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light text-muted border-end-0 px-3 d-flex align-items-center justify-content-center" style="min-height: 44px;">
+                            <Icon Name="user" Size="18" />
+                        </span>
+                        <InputText id="usernameInput"
+                                   class="form-control login-input py-2 border-start-0"
+                                   style="min-height: 44px; font-size: 0.95rem;"
+                                   placeholder="Enter your username"
+                                   autocomplete="username"
+                                   disabled="@_isSubmitting"
+                                   @bind-Value="_loginModel.Username" />
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label for="passwordInput" class="form-label small fw-semibold text-dark mb-1">Password</label>
+                    <div class="input-group position-relative">
+                        <span class="input-group-text bg-light text-muted border-end-0 px-3 d-flex align-items-center justify-content-center" style="min-height: 44px;">
+                            <Icon Name="lock" Size="18" />
+                        </span>
+                        <InputText id="passwordInput"
+                                   type="@(_showPassword ? "text" : "password")"
+                                   class="form-control login-input py-2 border-start-0 rounded-end pe-5"
+                                   style="min-height: 44px; font-size: 0.95rem;"
+                                   placeholder="Enter your password"
+                                   autocomplete="current-password"
+                                   disabled="@_isSubmitting"
+                                   @bind-Value="_loginModel.Password" />
+                        <button type="button" 
+                                class="btn border-0 text-muted px-3 d-flex align-items-center justify-content-center position-absolute end-0 top-0 bottom-0 password-toggle-btn"
+                                style="min-height: 44px; z-index: 6; background: transparent;"
+                                @onclick="TogglePasswordVisibility"
+                                disabled="@_isSubmitting"
+                                aria-label="@(_showPassword ? "Hide password" : "Show password")"
+                                title="@(_showPassword ? "Hide password" : "Show password")">
+                            <Icon Name="@(_showPassword ? "eye-off" : "eye")" Size="18" />
+                        </button>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold d-flex align-items-center justify-content-center" style="min-height: 44px; font-size: 0.975rem;" disabled="@_isSubmitting">
+                    @if (_isSubmitting)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <span>Signing in...</span>
+                    }
+                    else
+                    {
+                        <span>Sign In</span>
+                    }
+                </button>
+            </EditForm>
+
+            <hr class="border-secondary-subtle my-4" />
+
+            <div class="text-center">
+                <small class="text-muted" style="font-size: 0.8125rem;">DO.OneAccess Enterprise Access Portal &copy; @DateTime.UtcNow.Year</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery]
+    public bool? Initialized { get; set; }
+
+    [SupplyParameterFromQuery]
+    public bool? AlreadyInitialized { get; set; }
+
+    private readonly LoginRequestDto _loginModel = new();
+    private bool _isSubmitting;
+    private bool _showPassword;
+    private string? _errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var isInitialized = await SetupState.CheckInitializationAsync();
+        if (!isInitialized && !SetupState.HasError)
+        {
+            Navigation.NavigateTo("setup");
+            return;
+        }
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated == true)
+        {
+            NavigateToDestination();
+        }
+    }
+
+    private void TogglePasswordVisibility()
+    {
+        _showPassword = !_showPassword;
+    }
+
+    private async Task HandleLogin()
+    {
+        _errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_loginModel.Username) || string.IsNullOrWhiteSpace(_loginModel.Password))
+        {
+            _errorMessage = "Please enter both username and password.";
+            return;
+        }
+
+        _isSubmitting = true;
+        try
+        {
+            var success = await AuthService.LoginAsync(_loginModel);
+            if (success)
+            {
+                NavigateToDestination();
+            }
+            else
+            {
+                _errorMessage = "Invalid username or password. Please verify your credentials and try again.";
+            }
+        }
+        catch
+        {
+            _errorMessage = "An unexpected error occurred during sign in. Please try again.";
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void NavigateToDestination()
+    {
+        if (!string.IsNullOrWhiteSpace(ReturnUrl) &&
+            !ReturnUrl.Contains("login", StringComparison.OrdinalIgnoreCase) &&
+            !ReturnUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !ReturnUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            Navigation.NavigateTo(ReturnUrl);
+        }
+        else
+        {
+            Navigation.NavigateTo("systems");
+        }
+    }
+}

@@ -1,0 +1,23 @@
+@namespace DO.OneAccess.Client.Components.Common
+
+<div class="@ContainerClass" role="status" aria-live="polite" aria-busy="true">
+    <div class="spinner-border @SpinnerClass" role="presentation">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(Text))
+    {
+        <span class="ms-2 text-muted">@Text</span>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Text { get; set; } = "Loading...";
+    [Parameter] public bool Small { get; set; }
+    [Parameter] public bool Center { get; set; } = true;
+
+    private string ContainerClass => Center
+        ? "d-flex justify-content-center align-items-center py-4"
+        : "d-inline-flex align-items-center";
+
+    private string SpinnerClass => Small ? "spinner-border-sm text-primary" : "text-primary";
+}

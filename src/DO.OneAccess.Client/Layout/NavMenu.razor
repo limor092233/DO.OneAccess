@@ -1,0 +1,76 @@
+@namespace DO.OneAccess.Client.Layout
+
+<div class="nav-scrollable">
+    <nav class="sidebar-nav">
+        <div class="sidebar-section-title">PORTAL</div>
+
+        <NavLink href="/systems" class="sidebar-link">
+            <span class="nav-icon">
+                <Icon Name="grid" Size="18" />
+            </span>
+            <span class="nav-label">Registered Systems</span>
+        </NavLink>
+
+        <AuthorizeView Roles="ADMINISTRATOR,SYSTEM_ADMINISTRATOR">
+            <div class="sidebar-section-title">ADMINISTRATION</div>
+
+            <NavLink href="/admin/users" class="sidebar-link">
+                <span class="nav-icon">
+                    <Icon Name="users" Size="18" />
+                </span>
+                <span class="nav-label">Manage Users</span>
+            </NavLink>
+
+            <AuthorizeView Roles="SYSTEM_ADMINISTRATOR" Context="sysadminNavContext">
+                <Authorized>
+                    <NavLink href="/sysadmin/divisions" class="sidebar-link">
+                        <span class="nav-icon">
+                            <Icon Name="building" Size="18" />
+                        </span>
+                        <span class="nav-label">Manage Division</span>
+                    </NavLink>
+                </Authorized>
+                <NotAuthorized>
+                    <NavLink href="/admin/divisions" class="sidebar-link">
+                        <span class="nav-icon">
+                            <Icon Name="building" Size="18" />
+                        </span>
+                        <span class="nav-label">Manage Division</span>
+                    </NavLink>
+                </NotAuthorized>
+            </AuthorizeView>
+
+            <NavLink href="/admin/system-access" class="sidebar-link">
+                <span class="nav-icon">
+                    <Icon Name="key" Size="18" />
+                </span>
+                <span class="nav-label">System Access</span>
+            </NavLink>
+        </AuthorizeView>
+
+        <AuthorizeView Roles="SYSTEM_ADMINISTRATOR">
+            <div class="sidebar-section-title">SYSTEM ADMINISTRATION</div>
+
+            <NavLink href="/sysadmin/scopes" class="sidebar-link">
+                <span class="nav-icon">
+                    <Icon Name="shield" Size="18" />
+                </span>
+                <span class="nav-label">Admin Scopes</span>
+            </NavLink>
+
+            <NavLink href="/sysadmin/audit-logs" class="sidebar-link">
+                <span class="nav-icon">
+                    <Icon Name="list" Size="18" />
+                </span>
+                <span class="nav-label">Audit Logs</span>
+            </NavLink>
+
+            <NavLink href="/sysadmin/login-histories" class="sidebar-link">
+                <span class="nav-icon">
+                    <Icon Name="clock" Size="18" />
+                </span>
+                <span class="nav-label">Login History</span>
+            </NavLink>
+        </AuthorizeView>
+    </nav>
+</div>

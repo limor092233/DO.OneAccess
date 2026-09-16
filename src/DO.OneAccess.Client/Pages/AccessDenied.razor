@@ -1,0 +1,25 @@
+@page "/access-denied"
+@attribute [AllowAnonymous]
+
+<PageTitle>Access Denied — DO.OneAccess</PageTitle>
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-7 col-lg-5 text-center">
+            <div class="card shadow-sm border-0 p-4">
+                <div class="text-danger mb-3">
+                    <Icon Name="lock" Size="56" />
+                </div>
+                <h3 class="fw-bold mb-2">Access Denied</h3>
+                <p class="text-muted mb-4">
+                    You do not have the required permissions or organizational scope to view this page.
+                </p>
+                <div>
+                    <a href="systems" class="btn btn-primary px-4">
+                        <Icon Name="grid" Size="16" /> Return to Registered Systems
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

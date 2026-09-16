@@ -1,0 +1,67 @@
+@namespace DO.OneAccess.Client.Components.Common
+
+<span class="badge @BadgeClass">
+    @Text
+</span>
+
+@code {
+    [Parameter] public bool? IsActive { get; set; }
+    [Parameter] public string? AccessType { get; set; }
+    [Parameter] public string? RoleCode { get; set; }
+    [Parameter] public string? CustomText { get; set; }
+    [Parameter] public string? CustomClass { get; set; }
+
+    private string Text
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(CustomText)) return CustomText;
+            if (IsActive.HasValue) return IsActive.Value ? "Active" : "Inactive";
+            if (!string.IsNullOrWhiteSpace(AccessType)) return AccessType;
+            if (!string.IsNullOrWhiteSpace(RoleCode))
+            {
+                return RoleCode switch
+                {
+                    "SYSTEM_ADMINISTRATOR" => "System Admin",
+                    "ADMINISTRATOR" => "Administrator",
+                    "USER" => "User",
+                    _ => RoleCode
+                };
+            }
+            return string.Empty;
+        }
+    }
+
+    private string BadgeClass
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(CustomClass)) return CustomClass;
+
+            if (IsActive.HasValue)
+            {
+                return IsActive.Value ? "bg-success-subtle text-success border border-success-subtle"
+                                      : "bg-secondary-subtle text-secondary border border-secondary-subtle";
+            }
+
+            if (!string.IsNullOrWhiteSpace(AccessType))
+            {
+                return string.Equals(AccessType, "Allow", StringComparison.OrdinalIgnoreCase)
+                    ? "bg-success-subtle text-success border border-success-subtle"
+                    : "bg-danger-subtle text-danger border border-danger-subtle";
+            }
+
+            if (!string.IsNullOrWhiteSpace(RoleCode))
+            {
+                return RoleCode switch
+                {
+                    "SYSTEM_ADMINISTRATOR" => "bg-primary-subtle text-primary border border-primary-subtle",
+                    "ADMINISTRATOR" => "bg-info-subtle text-info border border-info-subtle",
+                    _ => "bg-light text-dark border"
+                };
+            }
+
+            return "bg-secondary";
+        }
+    }
+}

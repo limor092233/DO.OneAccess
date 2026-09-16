@@ -1,0 +1,354 @@
+@page "/admin/divisions"
+@page "/admin/sections"
+@attribute [Authorize(Roles = "ADMINISTRATOR,SYSTEM_ADMINISTRATOR")]
+@inject ISectionApiClient SectionClient
+@inject IDivisionApiClient DivisionClient
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Manage Division — DO.OneAccess</PageTitle>
+
+@if (!_isSysAdmin && _divisions != null && _divisions.Count > 0)
+{
+    var myDiv = _divisions[0];
+    <div class="card shadow-sm border-0 mb-4 p-3 bg-white">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <span class="text-uppercase text-muted fw-bold small" style="font-size: 0.72rem; letter-spacing: 0.05em;">Assigned Division</span>
+                <h4 class="fw-bold text-dark mb-1">@myDiv.Name <span class="badge bg-light text-dark border font-monospace ms-2">@myDiv.Code</span></h4>
+                @if (!string.IsNullOrWhiteSpace(myDiv.Description))
+                {
+                    <p class="text-muted small mb-0">@myDiv.Description</p>
+                }
+            </div>
+            <div>
+                <StatusBadge IsActive="@myDiv.IsActive" />
+            </div>
+        </div>
+    </div>
+}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="fw-bold text-dark mb-1">Sections</h3>
+        <p class="text-muted small mb-0">Manage organizational sections within your division scope.</p>
+    </div>
+    <button type="button" class="btn btn-primary d-flex align-items-center" @onclick="OpenCreateModal">
+        <Icon Name="plus" Size="16" />
+        <span class="ms-1">New Section</span>
+    </button>
+</div>
+
+<ErrorMessage Title="Error" Message="@_errorMessage" Errors="@_errors" />
+
+@if (_isLoading)
+{
+    <LoadingSpinner Text="Loading sections..." />
+}
+else if (_sections == null || _sections.Count == 0)
+{
+    <div class="card shadow-sm border-0">
+        <EmptyState IconName="folder"
+                    Title="No Sections Found"
+                    Description="No sections have been created within your division scope yet." />
+    </div>
+}
+else
+{
+    <div class="card shadow-sm border-0 overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Code</th>
+                        <th>Name</th>
+                        <th>Division</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                        <th class="text-end pe-3">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in _sections)
+                    {
+                        <tr>
+                            <td class="ps-3 font-monospace fw-semibold">@s.Code</td>
+                            <td class="fw-medium">@s.Name</td>
+                            <td><span class="badge bg-light text-dark border">@s.DivisionName</span></td>
+                            <td class="text-muted small">@(string.IsNullOrWhiteSpace(s.Description) ? "—" : s.Description)</td>
+                            <td><StatusBadge IsActive="@s.IsActive" /></td>
+                            <td class="text-end pe-3">
+                                <button type="button" class="btn btn-outline-secondary btn-sm me-1" @onclick="() => OpenEditModal(s)" title="Edit">
+                                    <Icon Name="edit" Size="14" />
+                                </button>
+                                @if (s.IsActive)
+                                {
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmDeactivate(s)" title="Deactivate">
+                                        <Icon Name="trash" Size="14" />
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Create Modal -->
+<ModalDialog IsOpen="@_showCreateModal" Title="Create New Section" OnClose="() => _showCreateModal = false">
+    <ChildContent>
+        @if (_isSysAdmin && _divisions != null && _divisions.Count > 0)
+        {
+            <div class="mb-3">
+                <label class="form-label small fw-semibold">Division</label>
+                <select class="form-select" @bind="_createModel.DivisionId">
+                    <option value="0">Select Division...</option>
+                    @foreach (var d in _divisions)
+                    {
+                        <option value="@d.DivisionId">@d.Name (@d.Code)</option>
+                    }
+                </select>
+            </div>
+        }
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Section Code</label>
+            <input type="text" class="form-control font-monospace" placeholder="e.g. IT-SEC" @bind="_createModel.Code" />
+            <div class="form-text small">Unique within the parent division.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Section Name</label>
+            <input type="text" class="form-control" placeholder="e.g. Information Security" @bind="_createModel.Name" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Description</label>
+            <textarea class="form-control" rows="2" placeholder="Optional description" @bind="_createModel.Description"></textarea>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showCreateModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="CreateSectionAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Create Section
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Edit Modal -->
+<ModalDialog IsOpen="@_showEditModal" Title="Edit Section" OnClose="() => _showEditModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Section Name</label>
+            <input type="text" class="form-control" @bind="_editModel.Name" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Description</label>
+            <textarea class="form-control" rows="2" @bind="_editModel.Description"></textarea>
+        </div>
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="editSectionActive" @bind="_editIsActive" />
+            <label class="form-check-label small fw-semibold" for="editSectionActive">Active Status</label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showEditModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="UpdateSectionAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Save Changes
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Deactivate Confirmation -->
+<ConfirmDialog IsOpen="@_showDeactivateConfirm"
+               Title="Deactivate Section"
+               Message="@($"Are you sure you want to deactivate section '{_selectedSection?.Name}' ({_selectedSection?.Code})?")"
+               ConfirmText="Deactivate"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="DeactivateSectionAsync"
+               OnCancel="() => _showDeactivateConfirm = false" />
+
+@code {
+    private IReadOnlyList<SectionDto>? _sections;
+    private IReadOnlyList<DivisionDto>? _divisions;
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+    private IDictionary<string, string[]>? _errors;
+    private bool _isSysAdmin;
+
+    private bool _showCreateModal;
+    private CreateSectionFormModel _createModel = new();
+
+    private bool _showEditModal;
+    private int _editingSectionId;
+    private EditSectionFormModel _editModel = new();
+    private bool _editIsActive = true;
+
+    private bool _showDeactivateConfirm;
+    private SectionDto? _selectedSection;
+
+    private sealed class CreateSectionFormModel
+    {
+        public int DivisionId { get; set; }
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+    }
+
+    private sealed class EditSectionFormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        _isSysAdmin = authState.User.IsInRole("SYSTEM_ADMINISTRATOR");
+
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _sections = await SectionClient.GetSectionsAsync(new SectionQueryDto { PageSize = 100 });
+            _divisions = await DivisionClient.GetAllDivisionsAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        catch
+        {
+            _errorMessage = "Failed to load sections. Please try again.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        var defaultDivisionId = _divisions?.FirstOrDefault()?.DivisionId ?? _sections?.FirstOrDefault()?.DivisionId ?? 0;
+        _createModel = new CreateSectionFormModel { DivisionId = defaultDivisionId };
+        _errorMessage = null;
+        _errors = null;
+        _showCreateModal = true;
+    }
+
+    private async Task CreateSectionAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var dto = new CreateSectionDto
+            {
+                DivisionId = _createModel.DivisionId,
+                Code = _createModel.Code,
+                Name = _createModel.Name,
+                Description = _createModel.Description
+            };
+            await SectionClient.CreateSectionAsync(dto);
+            _showCreateModal = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void OpenEditModal(SectionDto section)
+    {
+        _editingSectionId = section.SectionId;
+        _editIsActive = section.IsActive;
+        _editModel = new EditSectionFormModel
+        {
+            Name = section.Name,
+            Description = section.Description
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showEditModal = true;
+    }
+
+    private async Task UpdateSectionAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var updateDto = new UpdateSectionDto
+            {
+                Name = _editModel.Name,
+                Description = _editModel.Description,
+                IsActive = _editIsActive
+            };
+            await SectionClient.UpdateSectionAsync(_editingSectionId, updateDto);
+            _showEditModal = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmDeactivate(SectionDto section)
+    {
+        _selectedSection = section;
+        _showDeactivateConfirm = true;
+    }
+
+    private async Task DeactivateSectionAsync()
+    {
+        if (_selectedSection == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await SectionClient.DeactivateSectionAsync(_selectedSection.SectionId);
+            _showDeactivateConfirm = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

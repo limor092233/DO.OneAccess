@@ -1,0 +1,360 @@
+@page "/sysadmin/systems"
+@attribute [Authorize(Roles = "SYSTEM_ADMINISTRATOR")]
+@inject ISystemApiClient SystemClient
+
+<PageTitle>Manage Registered Systems — DO.OneAccess</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="fw-bold text-dark mb-1">Registered Systems</h3>
+        <p class="text-muted small mb-0">Global office systems registry and default access policies.</p>
+    </div>
+    <button type="button" class="btn btn-primary d-flex align-items-center" @onclick="OpenRegisterModal">
+        <Icon Name="plus" Size="16" />
+        <span class="ms-1">Register System</span>
+    </button>
+</div>
+
+<ErrorMessage Title="Error" Message="@_errorMessage" Errors="@_errors" />
+
+@if (_isLoading)
+{
+    <LoadingSpinner Text="Loading registered systems..." />
+}
+else if (_systems == null || _systems.Count == 0)
+{
+    <div class="card shadow-sm border-0">
+        <EmptyState IconName="server"
+                    Title="No Registered Systems"
+                    Description="No systems have been registered in the platform yet." />
+    </div>
+}
+else
+{
+    <div class="card shadow-sm border-0 overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Code</th>
+                        <th>Name</th>
+                        <th>Base URL</th>
+                        <th>Default Access</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th class="text-end pe-3">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var sys in _systems)
+                    {
+                        <tr>
+                            <td class="ps-3 font-monospace fw-semibold">@sys.SystemCode</td>
+                            <td class="fw-medium">@sys.SystemName</td>
+                            <td class="small text-muted font-monospace">@(string.IsNullOrWhiteSpace(sys.BaseUrl) ? "—" : sys.BaseUrl)</td>
+                            <td>
+                                <span class="badge @(sys.DefaultAccess == "All" ? "bg-success-subtle text-success border" : "bg-warning-subtle text-warning border")">
+                                    @sys.DefaultAccess
+                                </span>
+                            </td>
+                            <td><StatusBadge IsActive="@sys.IsActive" /></td>
+                            <td class="small text-muted">@sys.CreatedAt.ToString("yyyy-MM-dd")</td>
+                            <td class="text-end pe-3">
+                                <button type="button" class="btn btn-outline-secondary btn-sm me-1" @onclick="() => OpenEditModal(sys)" title="Edit">
+                                    <Icon Name="edit" Size="14" />
+                                </button>
+                                @if (sys.IsActive)
+                                {
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmDeactivate(sys)" title="Deactivate">
+                                        <Icon Name="trash" Size="14" />
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Register Modal -->
+<ModalDialog IsOpen="@_showRegisterModal" Title="Register New Office System" OnClose="() => _showRegisterModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">System Code</label>
+            <input type="text" class="form-control font-monospace" placeholder="e.g. HR-PORTAL" @bind="_registerModel.SystemCode" />
+            <div class="form-text small">Must be globally unique.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">System Name</label>
+            <input type="text" class="form-control" placeholder="e.g. Human Resources Self-Service" @bind="_registerModel.SystemName" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Description</label>
+            <textarea class="form-control" rows="2" placeholder="Optional description" @bind="_registerModel.Description"></textarea>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Base URL</label>
+            <input type="url" class="form-control font-monospace" placeholder="https://hr.office.local" @bind="_registerModel.BaseUrl" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Icon URL</label>
+            <input type="text" class="form-control" placeholder="Optional icon image URL" @bind="_registerModel.IconUrl" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Default Access Policy</label>
+            <select class="form-select" @bind="_registerModel.DefaultAccess">
+                <option value="Restricted">Restricted (Requires explicit user grant)</option>
+                <option value="All">All (Accessible to all active users by default)</option>
+            </select>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showRegisterModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="RegisterSystemAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Register System
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Edit Modal -->
+<ModalDialog IsOpen="@_showEditModal" Title="Edit Registered System" OnClose="() => _showEditModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">System Name</label>
+            <input type="text" class="form-control" @bind="_editModel.SystemName" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Description</label>
+            <textarea class="form-control" rows="2" @bind="_editModel.Description"></textarea>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Base URL</label>
+            <input type="url" class="form-control font-monospace" @bind="_editModel.BaseUrl" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Icon URL</label>
+            <input type="text" class="form-control" @bind="_editModel.IconUrl" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Default Access Policy</label>
+            <select class="form-select" @bind="_editModel.DefaultAccess">
+                <option value="Restricted">Restricted (Requires explicit user grant)</option>
+                <option value="All">All (Accessible to all active users by default)</option>
+            </select>
+        </div>
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="editSysActive" @bind="_editIsActive" />
+            <label class="form-check-label small fw-semibold" for="editSysActive">Active Status</label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showEditModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="UpdateSystemAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Save Changes
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Deactivate Confirmation -->
+<ConfirmDialog IsOpen="@_showDeactivateConfirm"
+               Title="Deactivate System"
+               Message="@($"Are you sure you want to deactivate system '{_selectedSystem?.SystemName}' ({_selectedSystem?.SystemCode})?")"
+               ConfirmText="Deactivate"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="DeactivateSystemAsync"
+               OnCancel="() => _showDeactivateConfirm = false" />
+
+@code {
+    private IReadOnlyList<SystemDto>? _systems;
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+    private IDictionary<string, string[]>? _errors;
+
+    private bool _showRegisterModal;
+    private RegisterSystemFormModel _registerModel = new();
+
+    private bool _showEditModal;
+    private Guid _editingSystemId;
+    private EditSystemFormModel _editModel = new();
+    private bool _editIsActive = true;
+
+    private bool _showDeactivateConfirm;
+    private SystemDto? _selectedSystem;
+
+    private sealed class RegisterSystemFormModel
+    {
+        public string SystemCode { get; set; } = string.Empty;
+        public string SystemName { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public string BaseUrl { get; set; } = string.Empty;
+        public string? IconUrl { get; set; }
+        public string DefaultAccess { get; set; } = "Restricted";
+    }
+
+    private sealed class EditSystemFormModel
+    {
+        public string SystemName { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public string BaseUrl { get; set; } = string.Empty;
+        public string? IconUrl { get; set; }
+        public string DefaultAccess { get; set; } = "Restricted";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSystemsAsync();
+    }
+
+    private async Task LoadSystemsAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _systems = await SystemClient.GetAllSystemsAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        catch
+        {
+            _errorMessage = "Failed to load systems. Please try again.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OpenRegisterModal()
+    {
+        _registerModel = new RegisterSystemFormModel { DefaultAccess = "Restricted" };
+        _errorMessage = null;
+        _errors = null;
+        _showRegisterModal = true;
+    }
+
+    private async Task RegisterSystemAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var dto = new RegisterSystemDto
+            {
+                SystemCode = _registerModel.SystemCode,
+                SystemName = _registerModel.SystemName,
+                Description = _registerModel.Description,
+                BaseUrl = _registerModel.BaseUrl,
+                IconUrl = _registerModel.IconUrl,
+                DefaultAccess = _registerModel.DefaultAccess
+            };
+            await SystemClient.RegisterSystemAsync(dto);
+            _showRegisterModal = false;
+            await LoadSystemsAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void OpenEditModal(SystemDto sys)
+    {
+        _editingSystemId = sys.SystemId;
+        _editIsActive = sys.IsActive;
+        _editModel = new EditSystemFormModel
+        {
+            SystemName = sys.SystemName ?? string.Empty,
+            Description = sys.Description,
+            BaseUrl = sys.BaseUrl ?? string.Empty,
+            IconUrl = sys.IconUrl,
+            DefaultAccess = sys.DefaultAccess ?? "Restricted"
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showEditModal = true;
+    }
+
+    private async Task UpdateSystemAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var updateDto = new UpdateSystemDto
+            {
+                SystemName = _editModel.SystemName,
+                Description = _editModel.Description,
+                BaseUrl = _editModel.BaseUrl,
+                IconUrl = _editModel.IconUrl,
+                DefaultAccess = _editModel.DefaultAccess,
+                IsActive = _editIsActive
+            };
+            await SystemClient.UpdateSystemAsync(_editingSystemId, updateDto);
+            _showEditModal = false;
+            await LoadSystemsAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmDeactivate(SystemDto sys)
+    {
+        _selectedSystem = sys;
+        _showDeactivateConfirm = true;
+    }
+
+    private async Task DeactivateSystemAsync()
+    {
+        if (_selectedSystem == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await SystemClient.DeactivateSystemAsync(_selectedSystem.SystemId);
+            _showDeactivateConfirm = false;
+            await LoadSystemsAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

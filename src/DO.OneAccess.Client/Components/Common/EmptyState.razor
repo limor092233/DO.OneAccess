@@ -1,0 +1,25 @@
+@namespace DO.OneAccess.Client.Components.Common
+
+<div class="text-center py-5 px-3">
+    <div class="text-muted mb-3">
+        <Icon Name="@IconName" Size="48" />
+    </div>
+    <h5 class="fw-semibold text-secondary mb-2">@Title</h5>
+    @if (!string.IsNullOrWhiteSpace(Description))
+    {
+        <p class="text-muted small mx-auto mb-3" style="max-width: 480px;">@Description</p>
+    }
+    @if (ActionContent != null)
+    {
+        <div class="mt-2">
+            @ActionContent
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string IconName { get; set; } = "folder";
+    [Parameter] public string Title { get; set; } = "No items found";
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public RenderFragment? ActionContent { get; set; }
+}

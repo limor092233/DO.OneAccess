@@ -1,0 +1,198 @@
+@page "/sysadmin/audit-logs"
+@attribute [Authorize(Roles = "SYSTEM_ADMINISTRATOR")]
+@inject IAuditApiClient AuditClient
+
+<PageTitle>Audit Logs — DO.OneAccess</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="fw-bold text-dark mb-1">Audit Logs</h3>
+        <p class="text-muted small mb-0">Complete audit trail of access events and administrative mutations.</p>
+    </div>
+</div>
+
+<ErrorMessage Title="Error" Message="@_errorMessage" />
+
+<!-- Filter Toolbar -->
+<div class="card shadow-sm border-0 mb-4 p-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label small fw-semibold">Action</label>
+            <input type="text" class="form-control form-control-sm" placeholder="e.g. UPDATE_USER, CREATE_DIVISION" @bind="_queryAction" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small fw-semibold">From</label>
+            <input type="date" class="form-control form-control-sm" @bind="_queryFrom" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small fw-semibold">To</label>
+            <input type="date" class="form-control form-control-sm" @bind="_queryTo" />
+        </div>
+        <div class="col-md-2 d-flex gap-2">
+            <button type="button" class="btn btn-primary btn-sm w-100" @onclick="() => LoadLogsAsync(1)">
+                Filter
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ResetFilters">
+                Reset
+            </button>
+        </div>
+    </div>
+</div>
+
+@if (_isLoading)
+{
+    <LoadingSpinner Text="Loading audit trail..." />
+}
+else if (_pagedResult == null || _pagedResult.Items.Count == 0)
+{
+    <div class="card shadow-sm border-0">
+        <EmptyState IconName="list"
+                    Title="No Audit Logs Found"
+                    Description="No audit entries matched your filter parameters." />
+    </div>
+}
+else
+{
+    <div class="card shadow-sm border-0 overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Timestamp (UTC)</th>
+                        <th>Action</th>
+                        <th>Entity</th>
+                        <th>Entity ID</th>
+                        <th>Actor ID</th>
+                        <th>IP Address</th>
+                        <th class="text-end pe-3">Payload</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var log in _pagedResult.Items)
+                    {
+                        <tr>
+                            <td class="ps-3 font-monospace small text-muted">@log.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td><span class="badge bg-secondary font-monospace">@log.Action</span></td>
+                            <td class="fw-semibold">@(log.EntityName ?? "—")</td>
+                            <td class="font-monospace small text-muted">@(log.EntityId ?? "—")</td>
+                            <td class="font-monospace small text-muted">@(log.UserId.HasValue ? log.UserId.Value.ToString() : "System")</td>
+                            <td class="small text-muted">@(string.IsNullOrWhiteSpace(log.IpAddress) ? "—" : log.IpAddress)</td>
+                            <td class="text-end pe-3">
+                                @if (!string.IsNullOrWhiteSpace(log.OldValues) || !string.IsNullOrWhiteSpace(log.NewValues))
+                                {
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => ViewPayload(log)">
+                                        View Diff
+                                    </button>
+                                }
+                                else
+                                {
+                                    <span class="text-muted small">—</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="p-3 border-top">
+            <Pagination CurrentPage="@_pagedResult.Page"
+                        TotalPages="@_pagedResult.TotalPages"
+                        TotalCount="@_pagedResult.TotalCount"
+                        HasNextPage="@_pagedResult.HasNextPage"
+                        HasPreviousPage="@_pagedResult.HasPreviousPage"
+                        OnPageChanged="HandlePageChanged" />
+        </div>
+    </div>
+}
+
+<!-- Detail Payload Modal -->
+<ModalDialog IsOpen="@_showPayloadModal" Title="Audit Log Change Detail" Size="lg" OnClose="() => _showPayloadModal = false">
+    <ChildContent>
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <h6 class="fw-bold text-danger small">Old Values</h6>
+                <div class="bg-light p-3 rounded border font-monospace small overflow-auto" style="max-height: 300px;">
+                    <pre class="mb-0">@(_selectedLog?.OldValues ?? "(None)")</pre>
+                </div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <h6 class="fw-bold text-success small">New Values</h6>
+                <div class="bg-light p-3 rounded border font-monospace small overflow-auto" style="max-height: 300px;">
+                    <pre class="mb-0">@(_selectedLog?.NewValues ?? "(None)")</pre>
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-secondary" @onclick="() => _showPayloadModal = false">Close</button>
+    </FooterContent>
+</ModalDialog>
+
+@code {
+    private PagedResult<AuditLogDto>? _pagedResult;
+    private bool _isLoading = true;
+    private string? _errorMessage;
+    private int _currentPage = 1;
+
+    private string? _queryAction;
+    private DateTime? _queryFrom;
+    private DateTime? _queryTo;
+
+    private bool _showPayloadModal;
+    private AuditLogDto? _selectedLog;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLogsAsync(_currentPage);
+    }
+
+    private async Task LoadLogsAsync(int page)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _pagedResult = await AuditClient.GetAuditLogsAsync(new AuditLogQueryDto
+            {
+                Page = page,
+                PageSize = 25,
+                Action = string.IsNullOrWhiteSpace(_queryAction) ? null : _queryAction.Trim(),
+                From = _queryFrom,
+                To = _queryTo
+            });
+            _currentPage = page;
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+        }
+        catch
+        {
+            _errorMessage = "Failed to load audit logs. Please try again.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task HandlePageChanged(int page)
+    {
+        await LoadLogsAsync(page);
+    }
+
+    private async Task ResetFilters()
+    {
+        _queryAction = null;
+        _queryFrom = null;
+        _queryTo = null;
+        await LoadLogsAsync(1);
+    }
+
+    private void ViewPayload(AuditLogDto log)
+    {
+        _selectedLog = log;
+        _showPayloadModal = true;
+    }
+}

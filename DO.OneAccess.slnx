@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DO.OneAccess.Application/DO.OneAccess.Application.csproj" />
+    <Project Path="src/DO.OneAccess.Client/DO.OneAccess.Client.csproj" />
+    <Project Path="src/DO.OneAccess.Domain/DO.OneAccess.Domain.csproj" />
+    <Project Path="src/DO.OneAccess.Infrastructure/DO.OneAccess.Infrastructure.csproj" />
+    <Project Path="src/DO.OneAccess.Server/DO.OneAccess.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DO.OneAccess.IntegrationTests/DO.OneAccess.IntegrationTests.csproj" />
+    <Project Path="tests/DO.OneAccess.UnitTests/DO.OneAccess.UnitTests.csproj" />
+  </Folder>
+</Solution>

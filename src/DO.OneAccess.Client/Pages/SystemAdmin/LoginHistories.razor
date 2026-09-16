@@ -1,0 +1,174 @@
+@page "/sysadmin/login-histories"
+@attribute [Authorize(Roles = "SYSTEM_ADMINISTRATOR")]
+@inject IAuditApiClient AuditClient
+
+<PageTitle>Login History — DO.OneAccess</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="fw-bold text-dark mb-1">Login History</h3>
+        <p class="text-muted small mb-0">Record of authentication events, IP addresses, and failure diagnostics.</p>
+    </div>
+</div>
+
+<ErrorMessage Title="Error" Message="@_errorMessage" />
+
+<!-- Filter Toolbar -->
+<div class="card shadow-sm border-0 mb-4 p-3">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label small fw-semibold">Outcome</label>
+            <select class="form-select form-select-sm" @bind="_querySuccessString">
+                <option value="">All Attempts</option>
+                <option value="true">Successful Logins</option>
+                <option value="false">Failed Logins</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small fw-semibold">From</label>
+            <input type="date" class="form-control form-control-sm" @bind="_queryFrom" />
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small fw-semibold">To</label>
+            <input type="date" class="form-control form-control-sm" @bind="_queryTo" />
+        </div>
+        <div class="col-md-3 d-flex gap-2">
+            <button type="button" class="btn btn-primary btn-sm w-100" @onclick="() => LoadHistoryAsync(1)">
+                Filter
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ResetFilters">
+                Reset
+            </button>
+        </div>
+    </div>
+</div>
+
+@if (_isLoading)
+{
+    <LoadingSpinner Text="Loading login history..." />
+}
+else if (_pagedResult == null || _pagedResult.Items.Count == 0)
+{
+    <div class="card shadow-sm border-0">
+        <EmptyState IconName="clock"
+                    Title="No Login History Found"
+                    Description="No authentication attempts matched your filter criteria." />
+    </div>
+}
+else
+{
+    <div class="card shadow-sm border-0 overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.88rem;">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Timestamp (UTC)</th>
+                        <th>Attempted Username</th>
+                        <th>Outcome</th>
+                        <th>Failure Reason</th>
+                        <th>IP Address</th>
+                        <th class="pe-3">User Agent</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var entry in _pagedResult.Items)
+                    {
+                        <tr>
+                            <td class="ps-3 font-monospace small text-muted">@entry.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td class="fw-semibold font-monospace">@(entry.UsernameAttempted ?? "—")</td>
+                            <td>
+                                @if (entry.Success)
+                                {
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle">Success</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Failed</span>
+                                }
+                            </td>
+                            <td class="text-danger small">@(string.IsNullOrWhiteSpace(entry.FailureReason) ? "—" : entry.FailureReason)</td>
+                            <td class="font-monospace small text-muted">@(string.IsNullOrWhiteSpace(entry.IpAddress) ? "—" : entry.IpAddress)</td>
+                            <td class="pe-3 text-truncate small text-muted" style="max-width: 250px;" title="@entry.UserAgent">
+                                @(string.IsNullOrWhiteSpace(entry.UserAgent) ? "—" : entry.UserAgent)
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="p-3 border-top">
+            <Pagination CurrentPage="@_pagedResult.Page"
+                        TotalPages="@_pagedResult.TotalPages"
+                        TotalCount="@_pagedResult.TotalCount"
+                        HasNextPage="@_pagedResult.HasNextPage"
+                        HasPreviousPage="@_pagedResult.HasPreviousPage"
+                        OnPageChanged="HandlePageChanged" />
+        </div>
+    </div>
+}
+
+@code {
+    private PagedResult<LoginHistoryDto>? _pagedResult;
+    private bool _isLoading = true;
+    private string? _errorMessage;
+    private int _currentPage = 1;
+
+    private string _querySuccessString = "";
+    private DateTime? _queryFrom;
+    private DateTime? _queryTo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadHistoryAsync(_currentPage);
+    }
+
+    private async Task LoadHistoryAsync(int page)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        bool? success = null;
+        if (bool.TryParse(_querySuccessString, out var s))
+        {
+            success = s;
+        }
+
+        try
+        {
+            _pagedResult = await AuditClient.GetLoginHistoriesAsync(new LoginHistoryQueryDto
+            {
+                Page = page,
+                PageSize = 25,
+                Success = success,
+                From = _queryFrom,
+                To = _queryTo
+            });
+            _currentPage = page;
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+        }
+        catch
+        {
+            _errorMessage = "Failed to load login history. Please try again.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task HandlePageChanged(int page)
+    {
+        await LoadHistoryAsync(page);
+    }
+
+    private async Task ResetFilters()
+    {
+        _querySuccessString = "";
+        _queryFrom = null;
+        _queryTo = null;
+        await LoadHistoryAsync(1);
+    }
+}

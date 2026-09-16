@@ -1,0 +1,1101 @@
+@page "/admin/users"
+@page "/admin/employees"
+@attribute [Authorize(Roles = "ADMINISTRATOR,SYSTEM_ADMINISTRATOR")]
+@inject IUserApiClient UserClient
+@inject ISectionApiClient SectionClient
+@inject IDivisionApiClient DivisionClient
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Manage Users — DO.OneAccess</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="fw-bold text-dark mb-1">Users</h3>
+        <p class="text-muted small mb-0">Manage user accounts within your organizational scope.</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-primary d-flex align-items-center" @onclick="OpenCreateModal">
+            <Icon Name="plus" Size="16" />
+            <span class="ms-1">New User</span>
+        </button>
+    </div>
+</div>
+
+<ErrorMessage Title="Error" Message="@_errorMessage" Errors="@_errors" />
+
+<!-- Search toolbar -->
+<div class="card shadow-sm border-0 mb-3 p-3">
+    <div class="row g-2 align-items-center">
+        <div class="col-md-5">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text bg-white text-muted">
+                    <Icon Name="search" Size="14" />
+                </span>
+                <input type="text"
+                       class="form-control"
+                       placeholder="Filter by username..."
+                       @bind="_searchUsername"
+                       @bind:event="oninput"
+                       @onkeyup="HandleSearchKeyUp" />
+            </div>
+        </div>
+        <div class="col-auto">
+            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => LoadUsersAsync(1)">Search</button>
+        </div>
+    </div>
+</div>
+
+@if (_isLoading)
+{
+    <LoadingSpinner Text="Loading users..." />
+}
+else if (_pagedResult == null || _pagedResult.Items.Count == 0)
+{
+    <div class="card shadow-sm border-0">
+        <EmptyState IconName="users"
+                    Title="No Users Found"
+                    Description="No user accounts were found matching the filter criteria." />
+    </div>
+}
+else
+{
+    <div class="card shadow-sm border-0 overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Username</th>
+                        <th>Emp #</th>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Position</th>
+                        <th>Section</th>
+                        <th>Role</th>
+                        <th>Status</th>
+                        <th>Last Login</th>
+                        <th class="text-end pe-3">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var user in _pagedResult.Items)
+                    {
+                        var isSelf = user.UserId == _currentUserId;
+                        var fullName = $"{user.FirstName} {user.MiddleName} {user.LastName}".Replace("  ", " ").Trim();
+                        <tr>
+                            <td class="ps-3 fw-semibold font-monospace">
+                                @user.Username
+                                @if (isSelf)
+                                {
+                                    <span class="badge bg-secondary ms-1 small">You</span>
+                                }
+                            </td>
+                            <td class="font-monospace small">@user.EmployeeNumber</td>
+                            <td class="fw-medium">@fullName</td>
+                            <td class="small text-secondary">@user.Email</td>
+                            <td class="small">@(string.IsNullOrWhiteSpace(user.Position) ? "—" : user.Position)</td>
+                            <td class="small">
+                                @if (!string.IsNullOrWhiteSpace(user.SectionName))
+                                {
+                                    <span class="badge bg-light text-dark border">@user.SectionName</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">—</span>
+                                }
+                            </td>
+                            <td><StatusBadge RoleCode="@user.RoleCode" /></td>
+                            <td><StatusBadge IsActive="@user.IsActive" /></td>
+                            <td class="small text-muted">@(user.LastLoginAt.HasValue ? user.LastLoginAt.Value.ToString("yyyy-MM-dd HH:mm") : "Never")</td>
+                            <td class="text-end pe-3">
+                                <button type="button" class="btn btn-outline-secondary btn-sm me-1" @onclick="() => OpenEditModal(user)" title="Edit">
+                                    <Icon Name="edit" Size="14" />
+                                </button>
+                                @if (_isSysAdmin && !isSelf && user.RoleCode != "SYSTEM_ADMINISTRATOR")
+                                {
+                                    <button type="button" class="btn btn-outline-info btn-sm me-1" @onclick="() => OpenChangeRoleModal(user)" title="Change Role">
+                                        <Icon Name="shield" Size="14" />
+                                    </button>
+                                    @if (user.IsActive)
+                                    {
+                                        <button type="button" class="btn btn-outline-warning btn-sm me-1" @onclick="() => OpenTransferModal(user)" title="Transfer System Administrator Role">
+                                            <Icon Name="key" Size="14" />
+                                        </button>
+                                    }
+                                }
+                                @if (user.IsActive && !isSelf)
+                                {
+                                    <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmDeactivate(user)" title="Deactivate">
+                                        <Icon Name="trash" Size="14" />
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="p-3 border-top">
+            <Pagination CurrentPage="@_pagedResult.Page"
+                        TotalPages="@_pagedResult.TotalPages"
+                        TotalCount="@_pagedResult.TotalCount"
+                        HasNextPage="@_pagedResult.HasNextPage"
+                        HasPreviousPage="@_pagedResult.HasPreviousPage"
+                        OnPageChanged="HandlePageChanged" />
+        </div>
+    </div>
+}
+
+<!-- Create User Modal (Standard) -->
+<ModalDialog IsOpen="@_showCreateModal" Title="Create New User Account" Size="lg" OnClose="() => _showCreateModal = false">
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(_createModalErrorMessage))
+        {
+            <div class="alert alert-danger py-2 px-3 small mb-3 d-flex align-items-center">
+                <Icon Name="alert-triangle" Size="16" CssClass="text-danger me-2 flex-shrink-0" />
+                <div>@_createModalErrorMessage</div>
+            </div>
+        }
+
+        <!-- EMPLOYEE INFORMATION -->
+        <div class="mb-3">
+            <div class="d-flex align-items-center mb-2 pb-1 border-bottom">
+                <span class="text-uppercase fw-bold text-muted small" style="font-size: 0.75rem; letter-spacing: 0.05em;">Employee Information</span>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-12 col-md-6">
+                    <label class="form-label small fw-semibold mb-1">Employee Number <span class="text-danger">*</span></label>
+                    <input type="text"
+                           class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.EmployeeNumber)) ? "is-invalid" : "")"
+                           placeholder="e.g. EMP-1001"
+                           @bind="_createModel.EmployeeNumber"
+                           disabled="@_isSubmitting" />
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.EmployeeNumber), out var empErr))
+                    {
+                        <div class="text-danger small mt-1">@empErr</div>
+                    }
+                </div>
+                <div class="col-12 col-md-6">
+                    <label class="form-label small fw-semibold mb-1">Position</label>
+                    <input type="text"
+                           class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.Position)) ? "is-invalid" : "")"
+                           placeholder="e.g. Analyst"
+                           @bind="_createModel.Position"
+                           disabled="@_isSubmitting" />
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.Position), out var posErr))
+                    {
+                        <div class="text-danger small mt-1">@posErr</div>
+                    }
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-12 col-md-4">
+                    <label class="form-label small fw-semibold mb-1">First Name <span class="text-danger">*</span></label>
+                    <input type="text"
+                           class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.FirstName)) ? "is-invalid" : "")"
+                           placeholder="First name"
+                           @bind="_createModel.FirstName"
+                           disabled="@_isSubmitting" />
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.FirstName), out var fnErr))
+                    {
+                        <div class="text-danger small mt-1">@fnErr</div>
+                    }
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small fw-semibold mb-1">Middle Name</label>
+                    <input type="text"
+                           class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.MiddleName)) ? "is-invalid" : "")"
+                           placeholder="Middle name"
+                           @bind="_createModel.MiddleName"
+                           disabled="@_isSubmitting" />
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small fw-semibold mb-1">Last Name <span class="text-danger">*</span></label>
+                    <input type="text"
+                           class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.LastName)) ? "is-invalid" : "")"
+                           placeholder="Last name"
+                           @bind="_createModel.LastName"
+                           disabled="@_isSubmitting" />
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.LastName), out var lnErr))
+                    {
+                        <div class="text-danger small mt-1">@lnErr</div>
+                    }
+                </div>
+            </div>
+            <div class="row g-2">
+                <div class="col-12">
+                    <label class="form-label small fw-semibold mb-1">Official Email <span class="text-danger">*</span></label>
+                    <input type="email"
+                           class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.Email)) ? "is-invalid" : "")"
+                           placeholder="user@agency.gov"
+                           @bind="_createModel.Email"
+                           disabled="@_isSubmitting" />
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.Email), out var emailErr))
+                    {
+                        <div class="text-danger small mt-1">@emailErr</div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- ORGANIZATIONAL ASSIGNMENT -->
+        <div class="mb-3">
+            <div class="d-flex align-items-center mb-2 pb-1 border-bottom">
+                <span class="text-uppercase fw-bold text-muted small" style="font-size: 0.75rem; letter-spacing: 0.05em;">Organizational Assignment</span>
+            </div>
+            <div class="row g-2">
+                @{
+                    var hasActiveSections = _filteredSections != null && _filteredSections.Count > 0;
+                    var divColClass = hasActiveSections ? "col-12 col-md-6" : "col-12";
+                }
+                <div class="@divColClass">
+                    <label class="form-label small fw-semibold mb-1">
+                        Division <span class="text-danger">*</span>
+                    </label>
+                    <select class="form-select form-select-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.DivisionId)) ? "is-invalid" : "")"
+                            @bind="_createModel.DivisionId"
+                            @bind:after="OnCreateDivisionChanged"
+                            disabled="@(_isSubmitting || (!_isSysAdmin && _divisions?.Count == 1))">
+                        <option value="">Select Division...</option>
+                        @if (_divisions != null)
+                        {
+                            @foreach (var d in _divisions.Where(div => div.IsActive))
+                            {
+                                <option value="@d.DivisionId">@d.Name (@d.Code)</option>
+                            }
+                        }
+                    </select>
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.DivisionId), out var divErr))
+                    {
+                        <div class="text-danger small mt-1">@divErr</div>
+                    }
+                    else if (_createModel.DivisionId.HasValue && !hasActiveSections && (_isSysAdmin ? _createModel.RoleId == 3 : true))
+                    {
+                        <div class="text-warning small mt-1 d-flex align-items-center">
+                            <Icon Name="alert-triangle" Size="13" CssClass="text-warning me-1 flex-shrink-0" />
+                            <span>This division has no active sections. A User account requires an active section.</span>
+                        </div>
+                    }
+                </div>
+                @if (hasActiveSections)
+                {
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold mb-1">
+                            Section @if (_createModel.RoleId == 3) { <span class="text-danger">*</span> } else { <span class="text-muted fw-normal small">(Optional)</span> }
+                        </label>
+                        <select class="form-select form-select-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.SectionId)) ? "is-invalid" : "")"
+                                @bind="_createModel.SectionId"
+                                disabled="@_isSubmitting">
+                            <option value="">Select Section...</option>
+                            @foreach (var s in _filteredSections!)
+                            {
+                                <option value="@s.SectionId">@s.Name (@s.Code)</option>
+                            }
+                        </select>
+                        @if (_createFieldErrors.TryGetValue(nameof(_createModel.SectionId), out var secErr))
+                        {
+                            <div class="text-danger small mt-1">@secErr</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ACCOUNT -->
+        <div class="mb-2">
+            <div class="d-flex align-items-center mb-2 pb-1 border-bottom">
+                <span class="text-uppercase fw-bold text-muted small" style="font-size: 0.75rem; letter-spacing: 0.05em;">Account</span>
+            </div>
+            <div class="row g-2">
+                <div class="col-12 col-md-4">
+                    <label class="form-label small fw-semibold mb-1">Role <span class="text-danger">*</span></label>
+                    @if (_isSysAdmin)
+                    {
+                        <select class="form-select form-select-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.RoleId)) ? "is-invalid" : "")"
+                                @bind="_createModel.RoleId"
+                                @bind:after="OnCreateRoleChanged"
+                                disabled="@_isSubmitting">
+                            <option value="3">User (Regular staff)</option>
+                            <option value="2">Administrator (Division scoped)</option>
+                        </select>
+                    }
+                    else
+                    {
+                        <input type="text" class="form-control form-control-sm bg-light" value="User (Fixed)" readonly disabled />
+                    }
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.RoleId), out var roleErr))
+                    {
+                        <div class="text-danger small mt-1">@roleErr</div>
+                    }
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small fw-semibold mb-1">Username <span class="text-danger">*</span></label>
+                    <input type="text"
+                           class="form-control form-control-sm font-monospace @(_createFieldErrors.ContainsKey(nameof(_createModel.Username)) ? "is-invalid" : "")"
+                           placeholder="e.g. jdoe"
+                           autocomplete="off"
+                           @bind="_createModel.Username"
+                           disabled="@_isSubmitting" />
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.Username), out var userErr))
+                    {
+                        <div class="text-danger small mt-1">@userErr</div>
+                    }
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small fw-semibold mb-1">Password <span class="text-danger">*</span></label>
+                    <div class="input-group input-group-sm">
+                        <input type="@(_showCreatePassword ? "text" : "password")"
+                               class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.Password)) ? "is-invalid" : "")"
+                               placeholder="Initial password"
+                               autocomplete="new-password"
+                               @bind="_createModel.Password"
+                               disabled="@_isSubmitting" />
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                @onclick="() => _showCreatePassword = !_showCreatePassword"
+                                tabindex="-1"
+                                title="@(_showCreatePassword ? "Hide password" : "Show password")">
+                            <Icon Name="@(_showCreatePassword ? "eye-off" : "eye")" Size="14" />
+                        </button>
+                    </div>
+                    @if (_createFieldErrors.TryGetValue(nameof(_createModel.Password), out var pwErr))
+                    {
+                        <div class="text-danger small mt-1">@pwErr</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _showCreateModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm d-flex align-items-center" @onclick="CreateUserAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Creating User...</span>
+            }
+            else
+            {
+                <span>Create User</span>
+            }
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Transfer System Administrator Role Modal -->
+<ModalDialog IsOpen="@_showTransferModal" Title="Transfer System Administrator Role" OnClose="() => _showTransferModal = false">
+    <ChildContent>
+        <div class="alert alert-danger py-2 px-3 small mb-3">
+            <div class="d-flex align-items-center">
+                <Icon Name="shield" Size="18" />
+                <span class="ms-2 fw-semibold">Critical Platform Transfer</span>
+            </div>
+            <div class="mt-1">
+                You are transferring the <strong>System Administrator</strong> role to <strong>@_transferTargetUser?.Username</strong>.
+                The target user will become the sole System Administrator with universal authority. You will step down to your chosen role below. Exactly one System Administrator exists at all times.
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Target Successor</label>
+            <input type="text" class="form-control form-control-sm bg-light fw-bold" value="@($"{_transferTargetUser?.FirstName} {_transferTargetUser?.LastName} (@{_transferTargetUser?.Username}) — Current Role: {_transferTargetUser?.RoleCode}")" readonly disabled />
+        </div>
+
+        <div class="card p-3 bg-light border mb-3">
+            <h6 class="fw-semibold text-dark mb-2 small">Your Resulting Role After Transfer</h6>
+            <div class="mb-2">
+                <label class="form-label small fw-semibold">Select Your New Role <span class="text-danger">*</span></label>
+                <select class="form-select form-select-sm" @bind="_transferModel.PreviousAdminNewRoleId" @bind:after="OnTransferRoleChanged">
+                    <option value="2">Administrator (Scoped to Division)</option>
+                    <option value="3">User (Regular Staff in Section)</option>
+                </select>
+            </div>
+
+            <div class="row g-2">
+                <div class="col-md-6">
+                    <label class="form-label small fw-semibold">
+                        Assigned Division <span class="text-danger">*</span>
+                    </label>
+                    <select class="form-select form-select-sm" @bind="_transferModel.PreviousAdminDivisionId" @bind:after="OnTransferDivisionChanged">
+                        <option value="">Select Division...</option>
+                        @if (_divisions != null)
+                        {
+                            @foreach (var d in _divisions)
+                            {
+                                <option value="@d.DivisionId">@d.Name (@d.Code)</option>
+                            }
+                        }
+                    </select>
+                </div>
+                @if (_transferModel.PreviousAdminNewRoleId == 3)
+                {
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">
+                            Assigned Section <span class="text-danger">*</span>
+                        </label>
+                        <select class="form-select form-select-sm" @bind="_transferModel.PreviousAdminSectionId" disabled="@(!_transferModel.PreviousAdminDivisionId.HasValue || _transferModel.PreviousAdminDivisionId.Value <= 0)">
+                            <option value="">Select Section...</option>
+                            @if (_transferFilteredSections != null)
+                            {
+                                @foreach (var s in _transferFilteredSections)
+                                {
+                                    <option value="@s.SectionId">@s.Name (@s.Code)</option>
+                                }
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="confirmTransferCheck" @bind="_transferConfirmed" />
+            <label class="form-check-label small text-danger fw-semibold" for="confirmTransferCheck">
+                I understand that this action is immediate and irrevocable, and I will lose System Administrator privileges.
+            </label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showTransferModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-danger" @onclick="TransferSysAdminAsync" disabled="@(!_transferConfirmed || _isSubmitting)">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Confirm & Transfer SysAdmin Role
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Edit User Modal -->
+<ModalDialog IsOpen="@_showEditModal" Title="Edit User" OnClose="() => _showEditModal = false">
+    <ChildContent>
+        <div class="row g-2 mb-2">
+            <div class="col-md-6">
+                <label class="form-label small fw-semibold">Username</label>
+                <input type="text" class="form-control form-control-sm" @bind="_editModel.Username" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small fw-semibold">Position</label>
+                <input type="text" class="form-control form-control-sm" @bind="_editModel.Position" />
+            </div>
+        </div>
+        <div class="row g-2 mb-2">
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold">First Name</label>
+                <input type="text" class="form-control form-control-sm" @bind="_editModel.FirstName" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold">Middle Name</label>
+                <input type="text" class="form-control form-control-sm" @bind="_editModel.MiddleName" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold">Last Name</label>
+                <input type="text" class="form-control form-control-sm" @bind="_editModel.LastName" />
+            </div>
+        </div>
+        <div class="row g-2 mb-2">
+            <div class="col-md-6">
+                <label class="form-label small fw-semibold">Email</label>
+                <input type="email" class="form-control form-control-sm" @bind="_editModel.Email" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small fw-semibold">Section</label>
+                <select class="form-select form-select-sm" @bind="_editModel.SectionId">
+                    <option value="">No Section (Null)</option>
+                    @if (_sections != null)
+                    {
+                        @foreach (var s in _sections)
+                        {
+                            <option value="@s.SectionId">@s.Name (@s.Code)</option>
+                        }
+                    }
+                </select>
+            </div>
+        </div>
+        <div class="form-check form-switch mb-3 mt-3">
+            <input class="form-check-input" type="checkbox" id="editUserActive" @bind="_editIsActive" disabled="@(_editingUserId == _currentUserId)" />
+            <label class="form-check-label small fw-semibold" for="editUserActive">Active Status</label>
+            @if (_editingUserId == _currentUserId)
+            {
+                <div class="form-text text-muted small">You cannot deactivate your own account.</div>
+            }
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showEditModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="UpdateUserAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Save Changes
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Change Role Modal (System Administrator Only, USER and ADMINISTRATOR only) -->
+<ModalDialog IsOpen="@_showChangeRoleModal" Title="Change User Role" OnClose="() => _showChangeRoleModal = false">
+    <ChildContent>
+        <p class="small text-muted mb-3">
+            Select the new role for user <strong>@_selectedUser?.Username</strong>.
+            Per approved security rules, only USER and ADMINISTRATOR roles can be assigned through this interface.
+        </p>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Role</label>
+            <select class="form-select" @bind="_newRoleId">
+                <option value="3">User (Regular Employee)</option>
+                <option value="2">Administrator (Scoped Management)</option>
+            </select>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showChangeRoleModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="ChangeRoleAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Update Role
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Deactivate Confirmation -->
+<ConfirmDialog IsOpen="@_showDeactivateConfirm"
+               Title="Deactivate User"
+               Message="@($"Are you sure you want to deactivate user '{_selectedUser?.Username}'?")"
+               ConfirmText="Deactivate"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="DeactivateUserAsync"
+               OnCancel="() => _showDeactivateConfirm = false" />
+
+@code {
+    private PagedResult<UserDto>? _pagedResult;
+    private IReadOnlyList<DivisionDto>? _divisions;
+    private IReadOnlyList<SectionDto>? _sections;
+    private List<SectionDto>? _filteredSections;
+    private List<SectionDto>? _transferFilteredSections;
+
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+    private IDictionary<string, string[]>? _errors;
+    private int _currentPage = 1;
+    private string? _searchUsername;
+
+    private Guid _currentUserId;
+    private bool _isSysAdmin;
+
+    private bool _showCreateModal;
+    private CreateUserFormModel _createModel = new();
+    private bool _showCreatePassword;
+    private bool _createSubmitted;
+    private readonly Dictionary<string, string> _createFieldErrors = new(StringComparer.OrdinalIgnoreCase);
+    private string? _createModalErrorMessage;
+
+    private bool _showTransferModal;
+    private UserDto? _transferTargetUser;
+    private TransferSysAdminFormModel _transferModel = new();
+    private bool _transferConfirmed;
+
+    private bool _showEditModal;
+    private Guid _editingUserId;
+    private EditUserFormModel _editModel = new();
+    private bool _editIsActive = true;
+
+    private bool _showChangeRoleModal;
+    private short _newRoleId = 3;
+
+    private bool _showDeactivateConfirm;
+    private UserDto? _selectedUser;
+
+    private sealed class CreateUserFormModel
+    {
+        public string EmployeeNumber { get; set; } = string.Empty;
+        public string FirstName { get; set; } = string.Empty;
+        public string? MiddleName { get; set; }
+        public string LastName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string? Position { get; set; }
+        public int? DivisionId { get; set; }
+        public int? SectionId { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public short RoleId { get; set; } = 3;
+    }
+
+    private sealed class TransferSysAdminFormModel
+    {
+        public short PreviousAdminNewRoleId { get; set; } = 2;
+        public int? PreviousAdminDivisionId { get; set; }
+        public int? PreviousAdminSectionId { get; set; }
+    }
+
+    private sealed class EditUserFormModel
+    {
+        public string Username { get; set; } = string.Empty;
+        public string FirstName { get; set; } = string.Empty;
+        public string? MiddleName { get; set; }
+        public string LastName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string? Position { get; set; }
+        public int? SectionId { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var sub = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? authState.User.FindFirst("sub")?.Value;
+        if (Guid.TryParse(sub, out var g))
+        {
+            _currentUserId = g;
+        }
+
+        _isSysAdmin = authState.User.IsInRole("SYSTEM_ADMINISTRATOR");
+
+        await LoadDivisionsAndSectionsAsync();
+        await LoadUsersAsync(_currentPage);
+    }
+
+    private async Task LoadDivisionsAndSectionsAsync()
+    {
+        try
+        {
+            _divisions = await DivisionClient.GetAllDivisionsAsync();
+            _sections = await SectionClient.GetSectionsAsync(new SectionQueryDto { IsActive = true });
+        }
+        catch
+        {
+            // best effort
+        }
+    }
+
+    private async Task LoadUsersAsync(int page)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _pagedResult = await UserClient.GetUsersAsync(new UserQueryDto
+            {
+                Page = page,
+                PageSize = 20,
+                UsernameContains = string.IsNullOrWhiteSpace(_searchUsername) ? null : _searchUsername.Trim()
+            });
+            _currentPage = page;
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        catch
+        {
+            _errorMessage = "Failed to load users. Please try again.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task HandlePageChanged(int page)
+    {
+        await LoadUsersAsync(page);
+    }
+
+    private async Task HandleSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await LoadUsersAsync(1);
+        }
+    }
+
+
+    private void OpenTransferModal(UserDto user)
+    {
+        _transferTargetUser = user;
+        _transferConfirmed = false;
+        _transferModel = new TransferSysAdminFormModel
+        {
+            PreviousAdminNewRoleId = 2,
+            PreviousAdminDivisionId = _divisions?.FirstOrDefault()?.DivisionId,
+            PreviousAdminSectionId = null
+        };
+        UpdateTransferFilteredSections();
+        _errorMessage = null;
+        _errors = null;
+        _showTransferModal = true;
+    }
+
+    private void OnTransferRoleChanged()
+    {
+        if (_transferModel.PreviousAdminNewRoleId == 2)
+        {
+            _transferModel.PreviousAdminSectionId = null;
+        }
+        else
+        {
+            UpdateTransferFilteredSections();
+        }
+    }
+
+    private void OnTransferDivisionChanged()
+    {
+        UpdateTransferFilteredSections();
+        _transferModel.PreviousAdminSectionId = null;
+    }
+
+    private void UpdateTransferFilteredSections()
+    {
+        if (_transferModel.PreviousAdminDivisionId.HasValue && _sections != null)
+        {
+            _transferFilteredSections = _sections.Where(s => s.DivisionId == _transferModel.PreviousAdminDivisionId.Value).ToList();
+        }
+        else
+        {
+            _transferFilteredSections = new List<SectionDto>();
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        int? defaultDivisionId = null;
+        if (!_isSysAdmin && _divisions?.Count == 1)
+        {
+            defaultDivisionId = _divisions[0].DivisionId;
+        }
+
+        _createModel = new CreateUserFormModel
+        {
+            RoleId = 3,
+            DivisionId = defaultDivisionId,
+            SectionId = null
+        };
+
+        UpdateCreateFilteredSections();
+
+        _createSubmitted = false;
+        _createFieldErrors.Clear();
+        _createModalErrorMessage = null;
+        _showCreatePassword = false;
+        _showCreateModal = true;
+    }
+
+    private void OnCreateRoleChanged()
+    {
+        if (_createModel.RoleId == 2)
+        {
+            _createModel.SectionId = null;
+        }
+        if (_createSubmitted)
+        {
+            ValidateCreateForm();
+        }
+    }
+
+    private void OnCreateDivisionChanged()
+    {
+        _createModel.SectionId = null;
+        UpdateCreateFilteredSections();
+        if (_createSubmitted)
+        {
+            ValidateCreateForm();
+        }
+    }
+
+    private void UpdateCreateFilteredSections()
+    {
+        if (_createModel.DivisionId.HasValue && _sections != null)
+        {
+            _filteredSections = _sections.Where(s => s.DivisionId == _createModel.DivisionId.Value && s.IsActive).ToList();
+        }
+        else
+        {
+            _filteredSections = new List<SectionDto>();
+        }
+    }
+
+    private bool ValidateCreateForm()
+    {
+        _createFieldErrors.Clear();
+        _createModalErrorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_createModel.EmployeeNumber))
+        {
+            _createFieldErrors[nameof(_createModel.EmployeeNumber)] = "Employee number is required.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_createModel.FirstName))
+        {
+            _createFieldErrors[nameof(_createModel.FirstName)] = "First name is required.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_createModel.LastName))
+        {
+            _createFieldErrors[nameof(_createModel.LastName)] = "Last name is required.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_createModel.Email))
+        {
+            _createFieldErrors[nameof(_createModel.Email)] = "Email is required.";
+        }
+        else if (!_createModel.Email.Contains('@') || !_createModel.Email.Contains('.'))
+        {
+            _createFieldErrors[nameof(_createModel.Email)] = "Please enter a valid email address.";
+        }
+
+        if (!_createModel.DivisionId.HasValue || _createModel.DivisionId.Value <= 0)
+        {
+            _createFieldErrors[nameof(_createModel.DivisionId)] = "Division is required.";
+        }
+
+        var roleToAssign = _isSysAdmin ? _createModel.RoleId : (short)3;
+        var hasActiveSections = _filteredSections != null && _filteredSections.Count > 0;
+
+        if (roleToAssign == 3) // USER
+        {
+            if (_createModel.DivisionId.HasValue && _createModel.DivisionId.Value > 0)
+            {
+                if (!hasActiveSections)
+                {
+                    _createFieldErrors[nameof(_createModel.DivisionId)] = "The selected division has no active sections. A user account cannot be created in a division without active sections.";
+                }
+                else if (!_createModel.SectionId.HasValue || _createModel.SectionId.Value <= 0)
+                {
+                    _createFieldErrors[nameof(_createModel.SectionId)] = "Section is required for User accounts.";
+                }
+            }
+        }
+        // ADMINISTRATOR (role 2): Division is required; Section remains optional.
+
+        if (string.IsNullOrWhiteSpace(_createModel.Username))
+        {
+            _createFieldErrors[nameof(_createModel.Username)] = "Username is required.";
+        }
+        else if (_createModel.Username.Trim().Length < 3)
+        {
+            _createFieldErrors[nameof(_createModel.Username)] = "Username must be at least 3 characters.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_createModel.Password))
+        {
+            _createFieldErrors[nameof(_createModel.Password)] = "Password is required.";
+        }
+        else if (_createModel.Password.Length < 8)
+        {
+            _createFieldErrors[nameof(_createModel.Password)] = "Password must be at least 8 characters.";
+        }
+
+        return _createFieldErrors.Count == 0;
+    }
+
+    private async Task CreateUserAsync()
+    {
+        if (_isSubmitting) return;
+
+        _createSubmitted = true;
+        if (!ValidateCreateForm())
+        {
+            return;
+        }
+
+        _isSubmitting = true;
+        _createModalErrorMessage = null;
+
+        var roleToAssign = _isSysAdmin ? _createModel.RoleId : (short)3;
+
+        try
+        {
+            var dto = new CreateUserDto
+            {
+                EmployeeNumber = _createModel.EmployeeNumber.Trim(),
+                FirstName = _createModel.FirstName.Trim(),
+                MiddleName = string.IsNullOrWhiteSpace(_createModel.MiddleName) ? null : _createModel.MiddleName.Trim(),
+                LastName = _createModel.LastName.Trim(),
+                Email = _createModel.Email.Trim().ToLowerInvariant(),
+                Position = string.IsNullOrWhiteSpace(_createModel.Position) ? null : _createModel.Position.Trim(),
+                DivisionId = _createModel.DivisionId,
+                SectionId = roleToAssign == 3 ? _createModel.SectionId : null,
+                Username = _createModel.Username.Trim(),
+                Password = _createModel.Password,
+                RoleId = roleToAssign
+            };
+            await UserClient.CreateUserAsync(dto);
+            _showCreateModal = false;
+            await LoadUsersAsync(_currentPage);
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _createModalErrorMessage = pde.GetFirstErrorMessage();
+            if (pde.Errors != null)
+            {
+                foreach (var (key, errs) in pde.Errors)
+                {
+                    if (errs.Length > 0)
+                    {
+                        _createFieldErrors[key] = errs[0];
+                    }
+                }
+            }
+        }
+        catch
+        {
+            _createModalErrorMessage = "An unexpected error occurred while creating the user account. Please try again.";
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private async Task TransferSysAdminAsync()
+    {
+        if (_transferTargetUser == null || !_transferConfirmed) return;
+
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var dto = new TransferSystemAdministratorDto
+            {
+                TargetUserId = _transferTargetUser.UserId,
+                PreviousAdminNewRoleId = _transferModel.PreviousAdminNewRoleId,
+                PreviousAdminDivisionId = _transferModel.PreviousAdminDivisionId,
+                PreviousAdminSectionId = _transferModel.PreviousAdminNewRoleId == 3 ? _transferModel.PreviousAdminSectionId : null
+            };
+            await UserClient.TransferSystemAdministratorAsync(dto);
+            _showTransferModal = false;
+            await LoadUsersAsync(_currentPage);
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void OpenEditModal(UserDto user)
+    {
+        _editingUserId = user.UserId;
+        _editIsActive = user.IsActive;
+        _editModel = new EditUserFormModel
+        {
+            Username = user.Username,
+            FirstName = user.FirstName,
+            MiddleName = user.MiddleName,
+            LastName = user.LastName,
+            Email = user.Email,
+            Position = user.Position,
+            SectionId = user.SectionId
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showEditModal = true;
+    }
+
+    private async Task UpdateUserAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var updateDto = new UpdateUserDto
+            {
+                Username = _editModel.Username,
+                FirstName = _editModel.FirstName,
+                MiddleName = _editModel.MiddleName,
+                LastName = _editModel.LastName,
+                Email = _editModel.Email,
+                Position = _editModel.Position,
+                SectionId = _editModel.SectionId,
+                IsActive = _editIsActive
+            };
+            await UserClient.UpdateUserAsync(_editingUserId, updateDto);
+            _showEditModal = false;
+            await LoadUsersAsync(_currentPage);
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void OpenChangeRoleModal(UserDto user)
+    {
+        _selectedUser = user;
+        _newRoleId = user.RoleId == 2 ? (short)3 : (short)2;
+        _errorMessage = null;
+        _errors = null;
+        _showChangeRoleModal = true;
+    }
+
+    private async Task ChangeRoleAsync()
+    {
+        if (_selectedUser == null) return;
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            await UserClient.ChangeRoleAsync(_selectedUser.UserId, new ChangeRoleDto { RoleId = _newRoleId });
+            _showChangeRoleModal = false;
+            await LoadUsersAsync(_currentPage);
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmDeactivate(UserDto user)
+    {
+        _selectedUser = user;
+        _showDeactivateConfirm = true;
+    }
+
+    private async Task DeactivateUserAsync()
+    {
+        if (_selectedUser == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await UserClient.DeactivateUserAsync(_selectedUser.UserId);
+            _showDeactivateConfirm = false;
+            await LoadUsersAsync(_currentPage);
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

@@ -1,0 +1,286 @@
+@page "/admin/system-access"
+@attribute [Authorize(Roles = "ADMINISTRATOR,SYSTEM_ADMINISTRATOR")]
+@inject ISystemAccessApiClient SystemAccessClient
+@inject IUserApiClient UserClient
+@inject ISystemApiClient SystemClient
+
+<PageTitle>Manage System Access — DO.OneAccess</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="fw-bold text-dark mb-1">System Access Overrides</h3>
+        <p class="text-muted small mb-0">Manage explicit user access overrides (Allow / Deny) for permitted office systems.</p>
+    </div>
+    <button type="button" class="btn btn-primary d-flex align-items-center" @onclick="OpenSetAccessModal">
+        <Icon Name="plus" Size="16" />
+        <span class="ms-1">Set Access Override</span>
+    </button>
+</div>
+
+<ErrorMessage Title="Error" Message="@_errorMessage" Errors="@_errors" />
+
+@if (_isLoading)
+{
+    <LoadingSpinner Text="Loading system access overrides..." />
+}
+else if (_pagedResult == null || _pagedResult.Items.Count == 0)
+{
+    <div class="card shadow-sm border-0">
+        <EmptyState IconName="key"
+                    Title="No Access Overrides Found"
+                    Description="No explicit per-user system access overrides are currently defined. Systems follow their default access policies." />
+    </div>
+}
+else
+{
+    <div class="card shadow-sm border-0 overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">System Name</th>
+                        <th>User ID</th>
+                        <th>Access Override</th>
+                        <th>Created At</th>
+                        <th class="text-end pe-3">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _pagedResult.Items)
+                    {
+                        <tr>
+                            <td class="ps-3 fw-semibold">@item.SystemName</td>
+                            <td class="font-monospace small text-muted">@item.UserId</td>
+                            <td><StatusBadge AccessType="@item.AccessType" /></td>
+                            <td class="small text-muted">@item.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td class="text-end pe-3">
+                                <button type="button" class="btn btn-outline-danger btn-sm" @onclick="() => ConfirmRevoke(item)" title="Revoke Override">
+                                    <Icon Name="trash" Size="14" />
+                                    <span class="ms-1 small">Revoke</span>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <div class="p-3 border-top">
+            <Pagination CurrentPage="@_pagedResult.Page"
+                        TotalPages="@_pagedResult.TotalPages"
+                        TotalCount="@_pagedResult.TotalCount"
+                        HasNextPage="@_pagedResult.HasNextPage"
+                        HasPreviousPage="@_pagedResult.HasPreviousPage"
+                        OnPageChanged="HandlePageChanged" />
+        </div>
+    </div>
+}
+
+<!-- Set Access Override Modal -->
+<ModalDialog IsOpen="@_showSetModal" Title="Set User System Access Override" OnClose="() => _showSetModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Target User</label>
+            <select class="form-select" @bind="_setModel.UserId">
+                <option value="@Guid.Empty">Select User...</option>
+                @if (_users != null)
+                {
+                    @foreach (var u in _users)
+                    {
+                        <option value="@u.UserId">@u.Username</option>
+                    }
+                }
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Target System</label>
+            <select class="form-select" @bind="_setModel.SystemId">
+                <option value="@Guid.Empty">Select System...</option>
+                @if (_systems != null)
+                {
+                    @foreach (var s in _systems)
+                    {
+                        <option value="@s.SystemId">@s.SystemName (@s.SystemCode)</option>
+                    }
+                }
+            </select>
+            <div class="form-text small">Only systems granted to your administration scope can be configured.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">Access Override Type</label>
+            <select class="form-select" @bind="_setModel.AccessType">
+                <option value="Allow">Allow (Explicit Grant)</option>
+                <option value="Deny">Deny (Explicit Restriction)</option>
+            </select>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary" @onclick="() => _showSetModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary" @onclick="SetAccessAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Save Override
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Revoke Confirmation -->
+<ConfirmDialog IsOpen="@_showRevokeConfirm"
+               Title="Revoke Access Override"
+               Message="@($"Are you sure you want to revoke the {_selectedItem?.AccessType} override for system '{_selectedItem?.SystemName}'?")"
+               ConfirmText="Revoke"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="RevokeAccessAsync"
+               OnCancel="() => _showRevokeConfirm = false" />
+
+@code {
+    private PagedResult<UserSystemAccessDto>? _pagedResult;
+    private IReadOnlyList<UserDto>? _users;
+    private IReadOnlyList<SystemDto>? _systems;
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+    private IDictionary<string, string[]>? _errors;
+    private int _currentPage = 1;
+
+    private bool _showSetModal;
+    private SetAccessFormModel _setModel = new() { AccessType = "Allow" };
+
+    private bool _showRevokeConfirm;
+    private UserSystemAccessDto? _selectedItem;
+
+    private sealed class SetAccessFormModel
+    {
+        public Guid UserId { get; set; }
+        public Guid SystemId { get; set; }
+        public string AccessType { get; set; } = "Allow";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPrerequisitesAsync();
+        await LoadOverridesAsync(_currentPage);
+    }
+
+    private async Task LoadPrerequisitesAsync()
+    {
+        try
+        {
+            var userResult = await UserClient.GetUsersAsync(new UserQueryDto { PageSize = 100, IsActive = true });
+            _users = userResult.Items;
+            _systems = await SystemClient.GetAccessibleSystemsAsync();
+        }
+        catch
+        {
+            // best-effort load
+        }
+    }
+
+    private async Task LoadOverridesAsync(int page)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _pagedResult = await SystemAccessClient.GetOverridesAsync(page: page, pageSize: 20);
+            _currentPage = page;
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        catch
+        {
+            _errorMessage = "Failed to load system access overrides. Please try again.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task HandlePageChanged(int page)
+    {
+        await LoadOverridesAsync(page);
+    }
+
+    private void OpenSetAccessModal()
+    {
+        _setModel = new SetAccessFormModel
+        {
+            UserId = _users?.FirstOrDefault()?.UserId ?? Guid.Empty,
+            SystemId = _systems?.FirstOrDefault()?.SystemId ?? Guid.Empty,
+            AccessType = "Allow"
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showSetModal = true;
+    }
+
+    private async Task SetAccessAsync()
+    {
+        if (_setModel.UserId == Guid.Empty || _setModel.SystemId == Guid.Empty)
+        {
+            _errorMessage = "Please select both a valid user and system.";
+            return;
+        }
+
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var dto = new SetUserSystemAccessDto
+            {
+                UserId = _setModel.UserId,
+                SystemId = _setModel.SystemId,
+                AccessType = _setModel.AccessType
+            };
+            await SystemAccessClient.SetAccessAsync(dto);
+            _showSetModal = false;
+            await LoadOverridesAsync(_currentPage);
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmRevoke(UserSystemAccessDto item)
+    {
+        _selectedItem = item;
+        _showRevokeConfirm = true;
+    }
+
+    private async Task RevokeAccessAsync()
+    {
+        if (_selectedItem == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await SystemAccessClient.RevokeAccessAsync(_selectedItem.UserSystemAccessId);
+            _showRevokeConfirm = false;
+            await LoadOverridesAsync(_currentPage);
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

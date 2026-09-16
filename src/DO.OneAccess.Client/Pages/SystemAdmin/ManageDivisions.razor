@@ -1,0 +1,939 @@
+@page "/sysadmin/divisions"
+@attribute [Authorize(Roles = "SYSTEM_ADMINISTRATOR")]
+@inject IDivisionApiClient DivisionClient
+@inject ISectionApiClient SectionClient
+
+<PageTitle>Manage Divisions — DO.OneAccess</PageTitle>
+
+<div class="division-page-container">
+    <!-- Header -->
+    <div class="division-page-header d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h3 class="fw-bold text-dark mb-1">Divisions &amp; Sections</h3>
+            <p class="text-muted small mb-0">Global management of organizational divisions and connected sections across DO.OneAccess.</p>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm d-flex align-items-center py-2 px-3" @onclick="OpenCreateModal">
+            <Icon Name="plus" Size="15" />
+            <span class="ms-1 fw-medium">New Division</span>
+        </button>
+    </div>
+
+    <!-- Error Message Alert (if any) -->
+    <ErrorMessage Title="Error" Message="@_errorMessage" Errors="@_errors" />
+
+    <!-- Search / Filter Toolbar -->
+    <div class="division-toolbar card shadow-sm border-0 mb-3 p-2 bg-white">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-6 col-lg-5">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white text-muted border-end-0">
+                        <Icon Name="search" Size="14" />
+                    </span>
+                    <input type="text"
+                           class="form-control border-start-0"
+                           placeholder="Search by division or section name or code..."
+                           @bind="_searchTerm"
+                           @bind:event="oninput" />
+                    @if (!string.IsNullOrWhiteSpace(_searchTerm))
+                    {
+                        <button type="button" class="btn btn-outline-secondary border-start-0" @onclick="() => _searchTerm = string.Empty" title="Clear search">
+                            <Icon Name="x" Size="14" />
+                        </button>
+                    }
+                </div>
+            </div>
+            <div class="col-auto ms-auto d-flex align-items-center gap-2">
+                @if (!string.IsNullOrWhiteSpace(_searchTerm))
+                {
+                    <span class="small text-muted">Filtered</span>
+                }
+                <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="LoadDataAsync" title="Refresh data">
+                    <Icon Name="refresh" Size="13" />
+                    <span class="ms-1 d-none d-sm-inline">Refresh</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backdrop to close 3-dot dropdown when clicking outside -->
+    @if (!string.IsNullOrEmpty(_openMenuId))
+    {
+        <div class="menu-backdrop" @onclick="CloseMenu"></div>
+    }
+
+    <!-- Table Container (owns vertical scrollbar with sticky header) -->
+    <div class="division-table-card">
+        @if (_isLoading)
+        {
+            <div class="d-flex flex-column align-items-center justify-content-center p-5 text-muted h-100">
+                <div class="spinner-border text-primary mb-3" role="status" style="width: 2.2rem; height: 2.2rem;">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="fw-medium small">Loading divisions and sections...</div>
+            </div>
+        }
+        else if (_divisions == null || _divisions.Count == 0)
+        {
+            <div class="d-flex flex-column align-items-center justify-content-center p-5 text-muted h-100">
+                <Icon Name="building" Size="40" CssClass="text-muted mb-2 opacity-50" />
+                <h5 class="fw-semibold text-dark mb-1">No divisions found</h5>
+                <p class="small text-muted mb-3">Create your first division to get started.</p>
+                <button type="button" class="btn btn-primary btn-sm d-flex align-items-center" @onclick="OpenCreateModal">
+                    <Icon Name="plus" Size="14" />
+                    <span class="ms-1">New Division</span>
+                </button>
+            </div>
+        }
+        else
+        {
+            var filteredDivisions = GetFilteredDivisions().ToList();
+            if (filteredDivisions.Count == 0)
+            {
+                <div class="d-flex flex-column align-items-center justify-content-center p-5 text-muted h-100">
+                    <Icon Name="search" Size="36" CssClass="text-muted mb-2 opacity-50" />
+                    <h6 class="fw-semibold text-dark mb-1">No matching divisions or sections found.</h6>
+                    <p class="small text-muted mb-3">Try adjusting your search query.</p>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _searchTerm = string.Empty">Clear Search</button>
+                </div>
+            }
+            else
+            {
+                <div class="division-table-scroll-container">
+                    <table class="table align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th class="ps-3" style="min-width: 280px;">Division / Section</th>
+                                <th style="min-width: 120px;">Code</th>
+                                <th style="min-width: 140px;">Sections</th>
+                                <th style="min-width: 100px;">Status</th>
+                                <th class="text-end pe-3" style="width: 60px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var div in filteredDivisions)
+                            {
+                                var isExpanded = IsDivisionExpanded(div.DivisionId);
+                                var childSections = GetChildSectionsForDivision(div.DivisionId);
+                                var divMenuId = $"div_{div.DivisionId}";
+                                var totalSectionsCount = _sections?.Count(s => s.DivisionId == div.DivisionId) ?? 0;
+
+                                <tr class="division-parent-row @(isExpanded ? "is-expanded" : "")">
+                                    <td class="ps-3">
+                                        <div class="d-flex align-items-center">
+                                            <button type="button"
+                                                    class="btn btn-link btn-sm p-0 me-2 text-secondary text-decoration-none d-flex align-items-center"
+                                                    @onclick="() => ToggleDivision(div.DivisionId)"
+                                                    title="@(isExpanded ? "Collapse sections" : "Expand sections")">
+                                                <Icon Name="@(isExpanded ? "chevron-down" : "chevron-right")" Size="14" />
+                                            </button>
+                                            <span class="fw-semibold text-dark">@div.Name</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-light text-dark border font-monospace fw-semibold">@div.Code</span>
+                                    </td>
+                                    <td>
+                                        <button type="button"
+                                                class="btn btn-light btn-sm border py-0 px-2 small text-secondary"
+                                                @onclick="() => ToggleDivision(div.DivisionId)">
+                                            @totalSectionsCount Section@(totalSectionsCount == 1 ? "" : "s")
+                                        </button>
+                                    </td>
+                                    <td>
+                                        <StatusBadge IsActive="@div.IsActive" />
+                                    </td>
+                                    <td class="text-end pe-3">
+                                        <div class="action-menu-dropdown @(_openMenuId == divMenuId ? "is-open" : "")" @onclick:stopPropagation="true">
+                                            <button type="button"
+                                                    class="action-menu-btn"
+                                                    @onclick="() => ToggleMenu(divMenuId)"
+                                                    @onclick:stopPropagation="true"
+                                                    title="Division actions">
+                                                <Icon Name="more-vertical" Size="16" />
+                                            </button>
+                                            @if (_openMenuId == divMenuId)
+                                            {
+                                                <div class="action-menu-list">
+                                                    <button type="button" class="dropdown-item" @onclick="() => { CloseMenu(); OpenEditModal(div); }">
+                                                        <Icon Name="edit" Size="13" CssClass="me-2 text-muted" />
+                                                        <span>Edit Division</span>
+                                                    </button>
+                                                    <button type="button" class="dropdown-item" @onclick="() => { CloseMenu(); OpenCreateSectionModal(div); }">
+                                                        <Icon Name="plus" Size="13" CssClass="me-2 text-muted" />
+                                                        <span>Add Section</span>
+                                                    </button>
+                                                    <button type="button" class="dropdown-item" @onclick="() => { CloseMenu(); EnsureExpanded(div.DivisionId); }">
+                                                        <Icon Name="folder" Size="13" CssClass="me-2 text-muted" />
+                                                        <span>Manage Sections</span>
+                                                    </button>
+                                                    @if (div.IsActive)
+                                                    {
+                                                        <div class="dropdown-divider my-1"></div>
+                                                        <button type="button" class="dropdown-item text-danger" @onclick="() => { CloseMenu(); ConfirmDeactivate(div); }">
+                                                            <Icon Name="trash" Size="13" CssClass="me-2 text-danger" />
+                                                            <span>Deactivate</span>
+                                                        </button>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+
+                                @if (isExpanded)
+                                {
+                                    @if (childSections.Count == 0)
+                                    {
+                                        <tr class="section-child-row">
+                                            <td colspan="5" class="section-indent py-2 text-muted small fst-italic">
+                                                <div class="d-flex align-items-center">
+                                                    <Icon Name="corner-down-right" Size="14" CssClass="text-muted me-2 flex-shrink-0" />
+                                                    <span>No sections created under @div.Name.</span>
+                                                    <button type="button" class="btn btn-link btn-sm py-0 px-2 ms-2 small" @onclick="() => OpenCreateSectionModal(div)">
+                                                        + Add Section
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var sec in childSections)
+                                        {
+                                            var secMenuId = $"sec_{sec.SectionId}";
+                                            <tr class="section-child-row">
+                                                <td class="section-indent">
+                                                    <div class="d-flex align-items-center">
+                                                        <Icon Name="corner-down-right" Size="14" CssClass="text-muted me-2 flex-shrink-0" />
+                                                        <span class="fw-normal text-secondary">@sec.Name</span>
+                                                    </div>
+                                                </td>
+                                                <td>
+                                                    <span class="font-monospace small text-muted">@sec.Code</span>
+                                                </td>
+                                                <td>
+                                                    <span class="small text-muted text-truncate d-inline-block" style="max-width: 250px;">
+                                                        @(string.IsNullOrWhiteSpace(sec.Description) ? "—" : sec.Description)
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <StatusBadge IsActive="@sec.IsActive" />
+                                                </td>
+                                                <td class="text-end pe-3">
+                                                    <div class="action-menu-dropdown @(_openMenuId == secMenuId ? "is-open" : "")" @onclick:stopPropagation="true">
+                                                        <button type="button"
+                                                                class="action-menu-btn"
+                                                                @onclick="() => ToggleMenu(secMenuId)"
+                                                                @onclick:stopPropagation="true"
+                                                                title="Section actions">
+                                                            <Icon Name="more-vertical" Size="16" />
+                                                        </button>
+                                                        @if (_openMenuId == secMenuId)
+                                                        {
+                                                            <div class="action-menu-list">
+                                                                <button type="button" class="dropdown-item" @onclick="() => { CloseMenu(); OpenEditSectionModal(sec); }">
+                                                                    <Icon Name="edit" Size="13" CssClass="me-2 text-muted" />
+                                                                    <span>Edit Section</span>
+                                                                </button>
+                                                                @if (sec.IsActive)
+                                                                {
+                                                                    <div class="dropdown-divider my-1"></div>
+                                                                    <button type="button" class="dropdown-item text-danger" @onclick="() => { CloseMenu(); ConfirmDeactivateSection(sec); }">
+                                                                        <Icon Name="trash" Size="13" CssClass="me-2 text-danger" />
+                                                                        <span>Deactivate</span>
+                                                                    </button>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<!-- Create Division Modal -->
+<ModalDialog IsOpen="@_showCreateModal" Title="Create New Division" OnClose="() => _showCreateModal = false">
+    <ChildContent>
+        @if (!string.IsNullOrWhiteSpace(_createModalErrorMessage))
+        {
+            <div class="alert alert-danger py-2 px-3 small mb-3 d-flex align-items-center">
+                <Icon Name="alert-triangle" Size="16" CssClass="text-danger me-2 flex-shrink-0" />
+                <div>@_createModalErrorMessage</div>
+            </div>
+        }
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Division Code <span class="text-danger">*</span></label>
+            <input type="text"
+                   class="form-control form-control-sm font-monospace @(_createFieldErrors.ContainsKey(nameof(_createModel.Code)) ? "is-invalid" : "")"
+                   placeholder="e.g. DIV-IT"
+                   @bind="_createModel.Code"
+                   disabled="@_isSubmitting" />
+            <div class="form-text small text-muted">Unique short identifier for the division, e.g., DIV-IT.</div>
+            @if (_createFieldErrors.TryGetValue(nameof(_createModel.Code), out var codeErr))
+            {
+                <div class="text-danger small mt-1">@codeErr</div>
+            }
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Division Name <span class="text-danger">*</span></label>
+            <input type="text"
+                   class="form-control form-control-sm @(_createFieldErrors.ContainsKey(nameof(_createModel.Name)) ? "is-invalid" : "")"
+                   placeholder="e.g. Information Technology"
+                   @bind="_createModel.Name"
+                   disabled="@_isSubmitting" />
+            @if (_createFieldErrors.TryGetValue(nameof(_createModel.Name), out var nameErr))
+            {
+                <div class="text-danger small mt-1">@nameErr</div>
+            }
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Description</label>
+            <textarea class="form-control form-control-sm"
+                      rows="3"
+                      placeholder="Optional description of division responsibilities"
+                      @bind="_createModel.Description"
+                      disabled="@_isSubmitting"></textarea>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _showCreateModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm d-flex align-items-center" @onclick="CreateDivisionAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Creating Division...</span>
+            }
+            else
+            {
+                <span>Create Division</span>
+            }
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Edit Division Modal -->
+<ModalDialog IsOpen="@_showEditModal" Title="Edit Division" OnClose="() => _showEditModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Division Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" @bind="_editModel.Name" disabled="@_isSubmitting" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Description</label>
+            <textarea class="form-control form-control-sm" rows="3" @bind="_editModel.Description" disabled="@_isSubmitting"></textarea>
+        </div>
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="editDivActive" @bind="_editIsActive" disabled="@_isSubmitting" />
+            <label class="form-check-label small fw-semibold" for="editDivActive">Active Status</label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _showEditModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm d-flex align-items-center" @onclick="UpdateDivisionAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Saving...</span>
+            }
+            else
+            {
+                <span>Save Changes</span>
+            }
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Deactivate Division Confirmation -->
+<ConfirmDialog IsOpen="@_showDeactivateConfirm"
+               Title="Deactivate Division"
+               Message="@($"Are you sure you want to deactivate division '{_selectedDivision?.Name}' ({_selectedDivision?.Code})?")"
+               ConfirmText="Deactivate"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="DeactivateDivisionAsync"
+               OnCancel="() => _showDeactivateConfirm = false" />
+
+<!-- Create Section Modal -->
+<ModalDialog IsOpen="@_showCreateSectionModal" Title="@($"Create Section in {_targetDivisionForSection?.Name}")" OnClose="() => _showCreateSectionModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Parent Division</label>
+            <input type="text" class="form-control form-control-sm bg-light" value="@($"{_targetDivisionForSection?.Name} ({_targetDivisionForSection?.Code})")" readonly disabled />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Section Code <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm font-monospace" placeholder="e.g. SEC-01" @bind="_createSectionModel.Code" disabled="@_isSubmitting" />
+            <div class="form-text small text-muted">Unique within the parent division.</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Section Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" placeholder="e.g. Core Development" @bind="_createSectionModel.Name" disabled="@_isSubmitting" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Description</label>
+            <textarea class="form-control form-control-sm" rows="3" placeholder="Optional description" @bind="_createSectionModel.Description" disabled="@_isSubmitting"></textarea>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _showCreateSectionModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm d-flex align-items-center" @onclick="CreateSectionAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Creating Section...</span>
+            }
+            else
+            {
+                <span>Create Section</span>
+            }
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Edit Section Modal -->
+<ModalDialog IsOpen="@_showEditSectionModal" Title="Edit Section" OnClose="() => _showEditSectionModal = false">
+    <ChildContent>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Section Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control form-control-sm" @bind="_editSectionModel.Name" disabled="@_isSubmitting" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Description</label>
+            <textarea class="form-control form-control-sm" rows="3" @bind="_editSectionModel.Description" disabled="@_isSubmitting"></textarea>
+        </div>
+        <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" id="editSecActive" @bind="_editSectionIsActive" disabled="@_isSubmitting" />
+            <label class="form-check-label small fw-semibold" for="editSecActive">Active Status</label>
+        </div>
+    </ChildContent>
+    <FooterContent>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="() => _showEditSectionModal = false" disabled="@_isSubmitting">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm d-flex align-items-center" @onclick="UpdateSectionAsync" disabled="@_isSubmitting">
+            @if (_isSubmitting)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Saving...</span>
+            }
+            else
+            {
+                <span>Save Changes</span>
+            }
+        </button>
+    </FooterContent>
+</ModalDialog>
+
+<!-- Deactivate Section Confirmation -->
+<ConfirmDialog IsOpen="@_showDeactivateSectionConfirm"
+               Title="Deactivate Section"
+               Message="@($"Are you sure you want to deactivate section '{_selectedSection?.Name}' ({_selectedSection?.Code})?")"
+               ConfirmText="Deactivate"
+               ConfirmButtonClass="btn-danger"
+               IsBusy="@_isSubmitting"
+               OnConfirm="DeactivateSectionAsync"
+               OnCancel="() => _showDeactivateSectionConfirm = false" />
+
+@code {
+    private IReadOnlyList<DivisionDto>? _divisions;
+    private IReadOnlyList<SectionDto>? _sections;
+    private readonly HashSet<int> _expandedDivisionIds = new();
+
+    private bool _isLoading = true;
+    private bool _isSubmitting;
+    private string? _errorMessage;
+    private IDictionary<string, string[]>? _errors;
+
+    // Search
+    private string _searchTermValue = string.Empty;
+    private string _searchTerm
+    {
+        get => _searchTermValue;
+        set
+        {
+            if (_searchTermValue != value)
+            {
+                _searchTermValue = value;
+                _searchExpandedDivisionIds.Clear();
+                _searchCollapsedDivisionIds.Clear();
+            }
+        }
+    }
+    private readonly HashSet<int> _searchExpandedDivisionIds = new();
+    private readonly HashSet<int> _searchCollapsedDivisionIds = new();
+
+    // 3-dot dropdown menu tracking
+    private string? _openMenuId;
+
+    // Division modals
+    private bool _showCreateModal;
+    private CreateDivisionFormModel _createModel = new();
+    private readonly Dictionary<string, string> _createFieldErrors = new(StringComparer.OrdinalIgnoreCase);
+    private string? _createModalErrorMessage;
+
+    private bool _showEditModal;
+    private int _editingDivisionId;
+    private EditDivisionFormModel _editModel = new();
+    private bool _editIsActive = true;
+
+    private bool _showDeactivateConfirm;
+    private DivisionDto? _selectedDivision;
+
+    // Section modals
+    private bool _showCreateSectionModal;
+    private DivisionDto? _targetDivisionForSection;
+    private CreateSectionFormModel _createSectionModel = new();
+
+    private bool _showEditSectionModal;
+    private int _editingSectionId;
+    private EditSectionFormModel _editSectionModel = new();
+    private bool _editSectionIsActive = true;
+
+    private bool _showDeactivateSectionConfirm;
+    private SectionDto? _selectedSection;
+
+    private sealed class CreateDivisionFormModel
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+    }
+
+    private sealed class EditDivisionFormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+    }
+
+    private sealed class CreateSectionFormModel
+    {
+        public int DivisionId { get; set; }
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+    }
+
+    private sealed class EditSectionFormModel
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private void ToggleDivision(int divisionId)
+    {
+        if (!string.IsNullOrWhiteSpace(_searchTerm))
+        {
+            if (IsDivisionExpanded(divisionId))
+            {
+                _searchExpandedDivisionIds.Remove(divisionId);
+                _searchCollapsedDivisionIds.Add(divisionId);
+            }
+            else
+            {
+                _searchCollapsedDivisionIds.Remove(divisionId);
+                _searchExpandedDivisionIds.Add(divisionId);
+            }
+            return;
+        }
+
+        if (_expandedDivisionIds.Contains(divisionId))
+        {
+            _expandedDivisionIds.Remove(divisionId);
+        }
+        else
+        {
+            _expandedDivisionIds.Add(divisionId);
+        }
+    }
+
+    private void EnsureExpanded(int divisionId)
+    {
+        if (!string.IsNullOrWhiteSpace(_searchTerm))
+        {
+            _searchCollapsedDivisionIds.Remove(divisionId);
+            _searchExpandedDivisionIds.Add(divisionId);
+        }
+        else
+        {
+            _expandedDivisionIds.Add(divisionId);
+        }
+    }
+
+    private void ToggleMenu(string menuId)
+    {
+        if (_openMenuId == menuId)
+        {
+            _openMenuId = null;
+        }
+        else
+        {
+            _openMenuId = menuId;
+        }
+    }
+
+    private void CloseMenu()
+    {
+        _openMenuId = null;
+    }
+
+    private IEnumerable<DivisionDto> GetFilteredDivisions()
+    {
+        if (_divisions == null) return Enumerable.Empty<DivisionDto>();
+        if (string.IsNullOrWhiteSpace(_searchTerm)) return _divisions;
+
+        var term = _searchTerm.Trim().ToLowerInvariant();
+        return _divisions.Where(d =>
+            d.Name.ToLowerInvariant().Contains(term) ||
+            d.Code.ToLowerInvariant().Contains(term) ||
+            (_sections != null && _sections.Any(s =>
+                s.DivisionId == d.DivisionId &&
+                (s.Name.ToLowerInvariant().Contains(term) || s.Code.ToLowerInvariant().Contains(term))
+            ))
+        );
+    }
+
+    private List<SectionDto> GetChildSectionsForDivision(int divisionId)
+    {
+        if (_sections == null) return new List<SectionDto>();
+        var childSections = _sections.Where(s => s.DivisionId == divisionId).ToList();
+
+        if (string.IsNullOrWhiteSpace(_searchTerm))
+        {
+            return childSections;
+        }
+
+        var term = _searchTerm.Trim().ToLowerInvariant();
+        var div = _divisions?.FirstOrDefault(d => d.DivisionId == divisionId);
+        var divMatched = div != null && (div.Name.ToLowerInvariant().Contains(term) || div.Code.ToLowerInvariant().Contains(term));
+
+        if (divMatched)
+        {
+            return childSections;
+        }
+
+        return childSections.Where(s =>
+            s.Name.ToLowerInvariant().Contains(term) || s.Code.ToLowerInvariant().Contains(term)
+        ).ToList();
+    }
+
+    private bool IsDivisionExpanded(int divisionId)
+    {
+        if (!string.IsNullOrWhiteSpace(_searchTerm))
+        {
+            var term = _searchTerm.Trim().ToLowerInvariant();
+            var hasMatchingSection = _sections != null && _sections.Any(s =>
+                s.DivisionId == divisionId &&
+                (s.Name.ToLowerInvariant().Contains(term) || s.Code.ToLowerInvariant().Contains(term))
+            );
+            if (hasMatchingSection)
+            {
+                return !_searchCollapsedDivisionIds.Contains(divisionId);
+            }
+
+            return _searchExpandedDivisionIds.Contains(divisionId);
+        }
+
+        return _expandedDivisionIds.Contains(divisionId);
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+
+        try
+        {
+            _divisions = await DivisionClient.GetAllDivisionsAsync();
+            _sections = await SectionClient.GetSectionsAsync(new SectionQueryDto { PageSize = 500 });
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        catch
+        {
+            _errorMessage = "Failed to load divisions and sections. Please try again.";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        _createModel = new CreateDivisionFormModel();
+        _createFieldErrors.Clear();
+        _createModalErrorMessage = null;
+        _showCreateModal = true;
+    }
+
+    private bool ValidateCreateDivision()
+    {
+        _createFieldErrors.Clear();
+        _createModalErrorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_createModel.Code))
+        {
+            _createFieldErrors[nameof(_createModel.Code)] = "Division code is required.";
+        }
+        else if (_createModel.Code.Trim().Length < 2)
+        {
+            _createFieldErrors[nameof(_createModel.Code)] = "Division code must be at least 2 characters.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_createModel.Name))
+        {
+            _createFieldErrors[nameof(_createModel.Name)] = "Division name is required.";
+        }
+
+        return _createFieldErrors.Count == 0;
+    }
+
+    private async Task CreateDivisionAsync()
+    {
+        if (_isSubmitting) return;
+
+        if (!ValidateCreateDivision())
+        {
+            return;
+        }
+
+        _isSubmitting = true;
+        _createModalErrorMessage = null;
+
+        try
+        {
+            var dto = new CreateDivisionDto
+            {
+                Code = _createModel.Code.Trim().ToUpperInvariant(),
+                Name = _createModel.Name.Trim(),
+                Description = string.IsNullOrWhiteSpace(_createModel.Description) ? null : _createModel.Description.Trim()
+            };
+            await DivisionClient.CreateDivisionAsync(dto);
+            _showCreateModal = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _createModalErrorMessage = pde.GetFirstErrorMessage();
+            if (pde.Errors != null)
+            {
+                foreach (var (key, errs) in pde.Errors)
+                {
+                    if (errs.Length > 0)
+                    {
+                        _createFieldErrors[key] = errs[0];
+                    }
+                }
+            }
+        }
+        catch
+        {
+            _createModalErrorMessage = "Failed to create division. Please try again.";
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void OpenEditModal(DivisionDto division)
+    {
+        _editingDivisionId = division.DivisionId;
+        _editIsActive = division.IsActive;
+        _editModel = new EditDivisionFormModel
+        {
+            Name = division.Name,
+            Description = division.Description
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showEditModal = true;
+    }
+
+    private async Task UpdateDivisionAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var updateDto = new UpdateDivisionDto
+            {
+                Name = _editModel.Name,
+                Description = _editModel.Description,
+                IsActive = _editIsActive
+            };
+            await DivisionClient.UpdateDivisionAsync(_editingDivisionId, updateDto);
+            _showEditModal = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmDeactivate(DivisionDto division)
+    {
+        _selectedDivision = division;
+        _showDeactivateConfirm = true;
+    }
+
+    private async Task DeactivateDivisionAsync()
+    {
+        if (_selectedDivision == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await DivisionClient.DeactivateDivisionAsync(_selectedDivision.DivisionId);
+            _showDeactivateConfirm = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    // Section handlers
+    private void OpenCreateSectionModal(DivisionDto division)
+    {
+        _targetDivisionForSection = division;
+        _createSectionModel = new CreateSectionFormModel
+        {
+            DivisionId = division.DivisionId
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showCreateSectionModal = true;
+    }
+
+    private async Task CreateSectionAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var dto = new CreateSectionDto
+            {
+                DivisionId = _createSectionModel.DivisionId,
+                Code = _createSectionModel.Code,
+                Name = _createSectionModel.Name,
+                Description = _createSectionModel.Description
+            };
+            await SectionClient.CreateSectionAsync(dto);
+            _showCreateSectionModal = false;
+            _expandedDivisionIds.Add(_createSectionModel.DivisionId);
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void OpenEditSectionModal(SectionDto section)
+    {
+        _editingSectionId = section.SectionId;
+        _editSectionIsActive = section.IsActive;
+        _editSectionModel = new EditSectionFormModel
+        {
+            Name = section.Name,
+            Description = section.Description
+        };
+        _errorMessage = null;
+        _errors = null;
+        _showEditSectionModal = true;
+    }
+
+    private async Task UpdateSectionAsync()
+    {
+        _isSubmitting = true;
+        _errorMessage = null;
+        _errors = null;
+
+        try
+        {
+            var updateDto = new UpdateSectionDto
+            {
+                Name = _editSectionModel.Name,
+                Description = _editSectionModel.Description,
+                IsActive = _editSectionIsActive
+            };
+            await SectionClient.UpdateSectionAsync(_editingSectionId, updateDto);
+            _showEditSectionModal = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private void ConfirmDeactivateSection(SectionDto section)
+    {
+        _selectedSection = section;
+        _showDeactivateSectionConfirm = true;
+    }
+
+    private async Task DeactivateSectionAsync()
+    {
+        if (_selectedSection == null) return;
+        _isSubmitting = true;
+
+        try
+        {
+            await SectionClient.DeactivateSectionAsync(_selectedSection.SectionId);
+            _showDeactivateSectionConfirm = false;
+            await LoadDataAsync();
+        }
+        catch (ProblemDetailsException pde)
+        {
+            _errorMessage = pde.GetFirstErrorMessage();
+            _errors = pde.Errors;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+}

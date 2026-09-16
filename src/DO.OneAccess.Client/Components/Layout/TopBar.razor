@@ -1,0 +1,76 @@
+@namespace DO.OneAccess.Client.Components.Layout
+@inject IClientAuthService AuthService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@if (IsVisible)
+{
+    <header class="topbar border-bottom bg-white px-4 d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center">
+            <a class="navbar-brand fw-bold text-primary d-flex align-items-center me-3" href="systems">
+                <span class="me-2 text-primary">
+                    <Icon Name="shield" Size="24" />
+                </span>
+                <span>DO.OneAccess</span>
+            </a>
+        </div>
+
+        <div class="d-flex align-items-center">
+            <AuthorizeView>
+                <Authorized>
+                    <div class="d-flex align-items-center me-3">
+                        <span class="me-2 fw-medium text-dark small">@context.User.Identity?.Name</span>
+                        <StatusBadge RoleCode="@GetRoleCode(context.User)" />
+                    </div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm d-flex align-items-center" @onclick="HandleLogout" title="Sign Out">
+                        <Icon Name="logout" Size="16" />
+                        <span class="ms-1 d-none d-sm-inline">Sign Out</span>
+                    </button>
+                </Authorized>
+                <NotAuthorized>
+                    <a href="login" class="btn btn-primary btn-sm">Sign In</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </header>
+}
+
+@code {
+    private bool IsVisible { get; set; } = true;
+
+    protected override void OnInitialized()
+    {
+        UpdateVisibility();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        UpdateVisibility();
+        StateHasChanged();
+    }
+
+    private void UpdateVisibility()
+    {
+        var relative = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?')[0].TrimStart('/').Trim().ToLowerInvariant();
+        IsVisible = relative != "login" && relative != "setup";
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+
+    private string GetRoleCode(System.Security.Claims.ClaimsPrincipal user)
+    {
+        return user.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value
+            ?? user.FindFirst("role")?.Value
+            ?? "USER";
+    }
+
+    private async Task HandleLogout()
+    {
+        await AuthService.LogoutAsync();
+        Navigation.NavigateTo("login");
+    }
+}

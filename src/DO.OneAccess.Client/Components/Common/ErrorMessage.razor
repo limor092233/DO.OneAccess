@@ -1,0 +1,80 @@
+@namespace DO.OneAccess.Client.Components.Common
+@using DO.OneAccess.Client.Auth
+
+@if (HasError)
+{
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <div class="d-flex align-items-start">
+            <div class="me-2 pt-1">
+                <Icon Name="alert-triangle" Size="18" />
+            </div>
+            <div class="flex-grow-1">
+                @if (!string.IsNullOrWhiteSpace(Title))
+                {
+                    <h6 class="alert-heading mb-1">@Title</h6>
+                }
+                <div>@Message</div>
+                @if (Errors != null && Errors.Count > 0)
+                {
+                    <ul class="mb-0 mt-2 ps-3 small">
+                        @foreach (var kvp in Errors)
+                        {
+                            @foreach (var err in kvp.Value)
+                            {
+                                <li>@err</li>
+                            }
+                        }
+                    </ul>
+                }
+            </div>
+            @if (Dismissible)
+            {
+                <button type="button" class="btn-close" aria-label="Close" @onclick="Dismiss"></button>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public IDictionary<string, string[]>? Errors { get; set; }
+    [Parameter] public bool Dismissible { get; set; } = true;
+    [Parameter] public EventCallback OnDismiss { get; set; }
+
+    private bool _dismissed;
+
+    private bool HasError => !_dismissed && (!string.IsNullOrWhiteSpace(Message) || (Errors != null && Errors.Count > 0));
+
+    protected override void OnParametersSet()
+    {
+        _dismissed = false;
+    }
+
+    public void SetFromException(ProblemDetailsException ex)
+    {
+        Title = ex.Title;
+        Message = ex.Detail ?? ex.Title;
+        Errors = ex.Errors;
+        _dismissed = false;
+        StateHasChanged();
+    }
+
+    public void Clear()
+    {
+        Title = null;
+        Message = null;
+        Errors = null;
+        _dismissed = true;
+        StateHasChanged();
+    }
+
+    private async Task Dismiss()
+    {
+        _dismissed = true;
+        if (OnDismiss.HasDelegate)
+        {
+            await OnDismiss.InvokeAsync();
+        }
+    }
+}

@@ -1,0 +1,206 @@
+html, body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #ffffff;
+    color: #1e293b;
+}
+
+h1:focus {
+    outline: none;
+}
+
+a, .btn-link {
+    color: #2563eb;
+    text-decoration: none;
+}
+
+a:hover, .btn-link:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+
+.btn-primary {
+    color: #fff;
+    background-color: #2563eb;
+    border-color: #1d4ed8;
+    box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
+}
+
+.btn-primary:hover {
+    background-color: #1d4ed8;
+    border-color: #1e40af;
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus, .form-select:focus {
+    box-shadow: 0 0 0 0.15rem rgba(37, 99, 235, 0.25);
+    border-color: #3b82f6;
+}
+
+.content {
+    padding-top: 1.1rem;
+}
+
+/* System Card Styles */
+.system-card {
+    transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease;
+    border: 1px solid #e2e8f0;
+}
+
+.system-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04) !important;
+    border-color: #93c5fd;
+}
+
+.system-icon-wrapper {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #eff6ff;
+    color: #2563eb;
+    border-radius: 12px;
+}
+
+.system-icon-img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 12px;
+}
+
+/* Table Polish */
+.table {
+    --bs-table-hover-bg: #f8fafc;
+}
+
+.table th {
+    font-size: 0.8125rem;
+    text-transform: uppercase;
+    letter-spacing: 0.035em;
+    color: #64748b;
+    font-weight: 600;
+}
+
+/* Modal Polish */
+.modal-backdrop.fade.show {
+    opacity: 0.45;
+}
+
+/* Validation styles */
+.valid.modified:not([type=checkbox]) {
+    outline: 1px solid #10b981;
+}
+
+.invalid {
+    outline: 1px solid #ef4444;
+}
+
+.validation-message {
+    color: #ef4444;
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}
+
+#blazor-error-ui {
+    color-scheme: light only;
+    background: #fef3c7;
+    color: #92400e;
+    bottom: 0;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    box-sizing: border-box;
+    display: none;
+    left: 0;
+    padding: 0.75rem 1.5rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1050;
+    font-weight: 500;
+}
+
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 1rem;
+    top: 0.75rem;
+}
+
+
+code {
+    color: #db2777;
+}
+
+/* Sidebar Navigation */
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 42px;
+    padding: 10px 20px;
+}
+
+.nav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    line-height: 1;
+}
+
+.nav-label {
+    display: inline-flex;
+    align-items: center;
+}
+
+.app-sidebar {
+    background-color: #ffffff;
+    border-right: 1px solid #dfe5ec;
+    box-shadow: none;
+}
+
+/* Login Card */
+.login-card {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+}
+
+/* Login Input Fields */
+.login-input {
+    background-color: #ffffff;
+    border-color: #dee2e6;
+    color: #212529;
+}
+
+.login-input:focus {
+    background-color: #ffffff;
+    border-color: #1877f2;
+    box-shadow: 0 0 0 2px rgba(24, 119, 242, 0.18);
+    outline: none;
+}
+
+.login-input:-webkit-autofill,
+.login-input:-webkit-autofill:hover,
+.login-input:-webkit-autofill:focus,
+.login-input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+    box-shadow: 0 0 0 1000px #ffffff inset;
+    -webkit-text-fill-color: #212529;
+    caret-color: #212529;
+}
+
+/* First Run Setup Card */
+.setup-card {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+}
+
+/* Autofill Background Override */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+    box-shadow: 0 0 0 1000px #ffffff inset;
+    -webkit-text-fill-color: #212529;
+    caret-color: #212529;
+}
